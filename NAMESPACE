@@ -1,0 +1,25 @@
+useDynLib(htree)
+
+
+# hrf functions 
+export(hrf)
+export(predict_hrf)
+export(partdep_hrf)
+export(varimp_hrf)
+export(quantile_hrf)
+
+
+# htb functions 
+export(htb)
+export(partdep_htb)
+export(predict_htb)
+export(varimp_htb)
+
+importFrom("graphics", "axis", "plot", "points")
+importFrom("stats", "aggregate", "median", "sd", "var")
+
+
+
+
+
+
