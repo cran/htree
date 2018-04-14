@@ -4,13 +4,13 @@
 \title{Variable importance}
 \description{Z-score variable importance for \code{hrf} and \code{htb}}
 \usage{
-varimp_hrf(object,nperm=10)
-varimp_htb(object,nperm=10,ntrees)
+varimp_hrf(object,nperm=20)
+varimp_htb(object,nperm=20,ntrees)
 
 }
 \arguments{
 \item{object}{Return list from \code{hrf} or \code{htb}}
-\item{nperm}{Vector of observation times}
+\item{nperm}{Number of permutations.}
 \item{ntrees}{Number of trees. Only for \code{varimp_htb}.}
 
 }
@@ -25,7 +25,7 @@ the vector \eqn{w_i=L(y_i,F_k(x_i))-L(y_i,F(x_i))} for \eqn{i=1,..,n}. The corre
 \eqn{z=mean(w_i)/se(w_i)}, which is an approximate paired test for the equality of the prediction errors. Larger z-score values indicate that the prediction error increases if \eqn{x_k} is marginalized out, and thus that \eqn{x_k} is useful. On the other hand, large negative values of the z-score indicate that the integrated model is more accurate.  For longitudinal data the \code{w_i} are computed by averaging across all observations from the \code{i}-th subject. For \code{htb} the prediction error is calculated based on the cross-validation model estimates, for \code{hrf} out-of-bag predictions 
 are used. 
 }
-\value{z-scores for the predictors.}
+\value{A \code{data.frame} with  \code{Relative change}: relative change in OOB error due to variable permutation;  \code{Mean change}: mean change in OOB error due to variable permutation;  \code{SE}: standard error of \code{Mean change}; \code{Z-value}:  \code{Mean change}/\code{SE};\code{P-value}: Approximate p-value of \code{Z-value}.   }
 
 \references{
 L. Breiman (2001). \dQuote{Random Forests,} \emph{Machine Learning} 45(1):5-32.
@@ -35,15 +35,41 @@ L. Breiman (2001). \dQuote{Random Forests,} \emph{Machine Learning} 45(1):5-32.
 
 \examples{
 \dontrun{
-data(mscm) 
-mscm=na.omit(mscm)
 
-# -- random forest model (predicting illness, with stress and illness as historical predictors)
-ff=hrf(x=as.matrix(mscm),id=mscm$id,time=mscm$day,yindx=4,vh=c(3,4),vc=c(1,2,5:14))
-vi=varimp_hrf(ff,nperm=20)
-vi=vi[vi>0]
-vi=vi[order(vi,decreasing=TRUE)]
-barplot(vi,main="Importance z-scores") 
+
+# --------------------------------------------------------------------------------------------- ##
+# Boston Housing data 
+#	Comparison of Z-score variable importance with coefficient Z-scores from linear model
+# --------------------------------------------------------------------------------------------- ##
+
+# Boston Housing data 
+library(mlbench)
+data(BostonHousing)
+dat=as.data.frame(na.omit(BostonHousing))
+dat$chas=as.numeric(dat$chas)
+
+# -- random forest 
+h=hrf(x=dat,yindx="medv",ntrees=500)
+
+
+# -- tree boosting
+hb=htb(x=dat,yindx="medv",ntrees=500,cv.fold=10)
+
+
+# -- Comparison of variable importance Z-scores and Z-scores from linear model 
+vi=varimp_hrf(h)
+vb=varimp_htb(hb)
+dvi=data.frame(var=rownames(vi),Z_hrf=vi$Z)
+dvb=data.frame(var=rownames(vb),Z_htb=vb$Z)
+
+dlm=summary(lm(medv~.,dat))$coeffi
+dlm=data.frame(var=rownames(dlm),Z_lm=round(abs(dlm[,3]),3))
+dlm=merge(dlm[-1,],dvi,by="var",all.x=TRUE)
+
+# -- Z-scores of hrf and lm for predictor variables 
+merge(dlm,dvb,by="var",all.x=TRUE)
+
+
 
 }
 

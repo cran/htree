@@ -2,12 +2,33 @@
 
 get_tree<-function(ti,all=TRUE,max_size=20)
 {
-ncol=13
+ncol=15
 if(!all){
 	h<-.C("get_tree",as.integer(ti),res=double(ncol),n=integer(1))
 }else{
  # gets all trees upto and including ti 
 	h<-.C("get_tree_all",as.integer(ti),res=double(ncol*(ti+1)*max_size),n=integer(1))
+
+}
+m<-matrix(h$res[1:h$n],ncol=ncol,byrow=TRUE)
+m
+}
+
+set_ncat=function(ncat)
+{
+
+	h=.C("set_ncat",as.integer(ncat))
+}
+
+
+get_tree_classify<-function(ti,all=TRUE,max_size=20,ncat)
+{
+ncol=15+ncat
+if(!all){
+	#h<-.C("get_tree",as.integer(ti),res=double(ncol),n=integer(1))
+}else{
+ # gets all trees upto and including ti 
+	h<-.C("get_tree_all_gini",as.integer(ti),as.integer(ncat),res=double(ncol*(ti+1)*max_size),n=integer(1))
 
 }
 m<-matrix(h$res[1:h$n],ncol=ncol,byrow=TRUE)
@@ -59,14 +80,14 @@ h<-.C("free_daop")
 }
 
 
-read_in_data<-function(x,time,id,yindx,nboost=1000,lambda=.1,nsplit=1,rf=0,nsamp=5,time_split=1)
+read_in_data<-function(x,time,id,yindx,nboost=1000,lambda=.1,nsplit=1,rf=0,nsamp=5,time_split=1,window_summary=0)
 {
 #void read_data(double *x,int *n,int *p,double *time,int *id,int *yindx)
 
 n=nrow(x)
 p=ncol(x)
 h<-.C("read_data",as.double(as.matrix(x)),as.integer(n),as.integer(p),as.double(time),as.integer(id),as.integer(yindx),
-	as.double(lambda),as.integer(nsplit),as.integer(nboost),as.integer(rf),as.integer(nsamp),as.integer(time_split))
+	as.double(lambda),as.integer(nsplit),as.integer(nboost),as.integer(rf),as.integer(nsamp),as.integer(time_split),as.integer(window_summary))
 
 }
 

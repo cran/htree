@@ -2,35 +2,14 @@
 
 
 
-uboost_dev<-function(B,vi=0,oob=FALSE,random_split=0)
+
+
+set_method_family=function(n)
 {
-i=get_info()
-n=i$n
-p=i$p
-h<-.C("boost_uthash_dev",as.numeric(random_split),as.integer(B),testerror=double(B),pred=double(n),as.integer(vi),vimp=double(B*p))
+	
+	h=.C("set_method_family",as.integer(n))
 
-#print(" R: Finished boost_uthash_dev ")
-
-oobmatrix=NULL
-if(oob)
-{
-	# get oob matrix 
-	oobmatrix=get_oob()
 }
-
-if(vi==0){
-	retlist=list(testerror=h$testerror,pred=h$pred,oob=oobmatrix)
-}else{
-	m=.C("delete_oob")
-	retlist=list(testerror=h$testerror,pred=h$pred,vimp=matrix(h$vimp,ncol=p,nrow=B,byrow=FALSE),oob=oobmatrix)
-}
-
-retlist
-}
-
-
-
-
 
 
 uboost_dev_wrapper<-function(B,vi=0,oob=FALSE,random_split=0,method=1)
@@ -47,12 +26,13 @@ if(oob)
 {
 	# get oob matrix 
 	oobmatrix=get_oob()
+	m=.C("delete_oob")
 }
 
 if(vi==0){
 	retlist=list(testerror=h$testerror,pred=h$pred,oob=oobmatrix)
 }else{
-	m=.C("delete_oob")
+	
 	retlist=list(testerror=h$testerror,pred=h$pred,vimp=matrix(h$vimp,ncol=p,nrow=B,byrow=FALSE),oob=oobmatrix)
 }
 
@@ -61,10 +41,100 @@ retlist
 
 
 
-htree<-function(x,time,id,yindx,ntrees=100,lambda=1,rf=1,nsplit=200,nsamp=5,tf=.5,id_sampling=TRUE,rsplit=0,
-		mtry=NULL,vi=0,time_split=1,oob=FALSE,oobmatrix=NULL,keep_data=TRUE,vh=NULL,vc=NULL,cv_train=NULL,method=1)
+upt=function(id,tt)
 {
-read_in_data(x=x,time=time,id=id,yindx=yindx,nboost=ntrees,lambda=lambda,nsplit=nsplit,rf=rf,nsamp=nsamp,time_split=time_split)
+
+	## helper function for extracting unique delta values
+	z=data.frame(id=id,time=tt)
+	ilist=list()
+	h=unique(z$id)
+	ilist[as.character(h)]=c(1:length(h))
+	z$id=as.numeric(unlist(ilist[as.character(z$id)]))
+
+	ff=function(x)
+	{
+		if(length(x)>1)	
+		{
+		x=sort(x,decreasing=T)
+		x1=-diff(x)
+		n=length(x1)
+		z=NULL
+		for(k in 1:n) ## (TRUE)
+			z=c(z,cumsum(x1[k:n]))
+		}else{
+		z=NULL
+		}
+		z
+		
+	}
+
+	aa=aggregate(z$time,by=list(id=z$id),ff)
+	ua=unique(as.numeric(unlist(aa$x)))
+	ua
+}
+
+set_delta=function(delta,tt,id)
+{
+	if(is.null(delta))
+	{
+		# extract unique delta values
+		ux=upt(tt=tt,id=id)
+	}else{
+		ux=unique(delta)
+	}
+		
+	nux=length(ux)
+	h=.C("initialize_delta",as.integer(nux),as.double(ux)) 
+
+}
+
+
+htree<-function(x,time,id,yindx,ntrees=100,lambda=1,rf=1,nsplit=200,nsamp=5,tf=.5,id_sampling=TRUE,rsplit=0,
+		mtry=NULL,vi=0,time_split=1,oob=FALSE,oobmatrix=NULL,keep_data=TRUE,vh=NULL,vc=NULL,cv_train=NULL,method=1,delta=NULL,
+		control=list(nmax=10,nodesize=5,method_family=1))
+{
+
+
+window_summary=0
+if(is.element(method,c(8,9,10,11)))
+	window_summary=1
+
+ncat=(-10)
+if(method==12)
+{
+	## -- classification 
+	ncat=length(unique(x[,yindx+1]))
+	window_summary=1
+}
+
+read_in_data(x=x,time=time,id=id,yindx=yindx,nboost=ntrees,lambda=lambda,nsplit=nsplit,rf=rf,nsamp=nsamp,time_split=time_split,window_summary=window_summary)
+
+
+set_delta(delta=delta,tt=time,id=id)
+
+
+if((!is.null(control$method_family)))
+{
+	#print(paste("nodesize: ",control$nodesize,sep=""))
+	if(is.element(control$method_family,c(1,2)))
+		set_method_family(control$method_family)
+}
+
+
+if((!is.null(control$nodesize)))
+{
+	#print(paste("nodesize: ",control$nodesize,sep=""))
+	set_minnodesize(max(c(1,control$nodesize)))
+}
+
+if(ncat>0)
+{
+	set_ncat(ncat=ncat)
+}
+
+
+if(!is.null(control$nmax))
+	set_nmax(control$nmax)
 
 if(is.null(mtry))
 {
@@ -112,7 +182,19 @@ if(!is.null(oobmatrix))
 h=uboost_dev_wrapper(B=ntrees,vi=vi,oob=oob,random_split=rsplit,method=method)
 
 #print(" getting tree ")
-m=get_tree(ti=(ntrees-1),all=TRUE,max_size=(nsplit*4))
+
+m=NULL
+if(1){ #### ---- TESTING --------- ####
+# 
+if(ncat<0)
+	m=get_tree(ti=(ntrees-1),all=TRUE,max_size=(nsplit*4))
+
+if(ncat>0)
+	m=get_tree_classify(ti=(ntrees-1),all=TRUE,max_size=(nsplit*4),ncat=ncat)
+
+}
+
+	
 #print(" freeing data")
 
 ######################## TESTING ############################################
@@ -125,11 +207,18 @@ free()
 #print(" finished with data-free")
 
 
+	if(rf==1&oob)
+	{
+		## standardize oob-predictions 
+		noob=apply(h$oob==1,1,sum)
+		h$pred=h$pred/noob
+
+	}
 
 	retlist=list(trees=m,error=h$testerror,pred=h$pred,yindx=yindx,
 		time=time,rf=rf,mtry=mtry,nsamp=nsamp,
 		nsplit=nsplit,rf=rf,lambda=lambda,ntrees=ntrees,vimp=h$vimp,
-		time_split=time_split,oob=h$oob,train=train,vi=vi,oob=oob,vh=vh,vc=vc,method=method,id_sampling=id_sampling)
+		time_split=time_split,oobmatrix=h$oob,train=train,vi=vi,oob=oob,vh=vh,vc=vc,method=method,id_sampling=id_sampling,dimx=dim(x),ncat=ncat,control=control)
 
 if(keep_data){
 	retlist$x=x
@@ -138,9 +227,19 @@ if(keep_data){
 
 class(retlist)<-"htree"
 retlist
+
 }
 
+set_minnodesize=function(n)
+{
+	
+	h=.C("set_minnodesize",as.integer(n))
+}
 
+set_nmax=function(x)
+{
+	h=.C("set_n_max",as.integer(x))
+}
 
 seboot=function(B,M=10,object)
 {
@@ -215,7 +314,7 @@ for(b in 1:length(m))
 B=length(m)
 M=object$ntrees
 R=m[[1]]$fit$ntrees
-bias=sa/B*(1/R-1/M)
+bias=sa/B*(1/R) ##-1/M)
 var_biased=apply(pa,1,var)
 var_hat=var_biased-bias
 mean_var=mean(var_hat,na.rm=T)
@@ -247,16 +346,37 @@ if(is.null(x))
 n=nrow(x)
 p=ncol(x)
 
+#print(paste("method=",object$method,sep=""))
+
 h=.C("read_predict",as.double(as.matrix(x)),as.integer(n),as.integer(p),as.double(time),as.integer(id),
-		as.integer(yindx),as.double(t(object$trees)),as.integer(nrow(object$trees)),as.integer(ntrees_in_matrix),as.integer(time_split))
+		as.integer(yindx),as.double(t(object$trees)),as.integer(nrow(object$trees)),
+		as.integer(ncol(object$trees)),as.integer(ntrees_in_matrix),as.integer(time_split),as.integer(object$method))
 
 if(!all.trees){
 # --- predict 
-	h=.C("predict_trees_fast",as.integer(ntrees),pred=double(nrow(x)))
+
+	if(object$ncat<=0)
+		h=.C("predict_trees_fast",as.integer(ntrees),pred=double(nrow(x)))
+
+	if(object$ncat>0)
+	{
+		h=.C("predict_trees_gini",as.integer(ntrees),as.integer(object$ncat),pred=double(nrow(x)*object$ncat))
+		h$pred=matrix(h$pred,ncol=object$ncat,byrow=FALSE)
+		## 
+	}
 
 predictions=h$pred
-if(object$rf==1)
+if(object$rf==1){
 	predictions=predictions/ntrees
+
+	if(object$ncat>0)
+	{
+		## return class probabilities 
+		s=apply(predictions,1,sum)
+		predictions=predictions/s
+	}
+
+}
 }else{
 	h=.C("predict_trees_all",as.integer(ntrees),pred=double(nrow(x)*ntrees))
 
@@ -273,14 +393,7 @@ predictions
 
 
 
-if(0)
-{
-p=partdep(object=h,xindx=4,xlim=NULL,ngrid=100,ntrees=NULL,subsample=1)
-
-
-}
-
-partdep=function(object,xindx,xlim=NULL,ngrid=100,ntrees=NULL,subsample=1)
+partdep=function(object,xindx,xlim=NULL,ngrid=100,ntrees=NULL,subsample=1,which.class=1)
 {
 
 # object=h;xindx=4;subsample=.1
@@ -288,6 +401,22 @@ partdep=function(object,xindx,xlim=NULL,ngrid=100,ntrees=NULL,subsample=1)
 uid=unique(object$id)
 ns=round(subsample*length(uid))
 sid=sample(uid,size=ns,replace=F)
+
+
+uv=unique(object$x[,xindx])
+nuv=length(uv)
+if(nuv<ngrid)
+{
+	tt=sort(uv)
+	ngrid=nuv
+}else{
+	if(is.null(xlim)){
+		tt=seq(min(object$x[,xindx]),max(object$x[,xindx]),length=ngrid)
+	}else{
+		tt=seq(xlim[1],xlim[2],length=ngrid)
+	}
+}
+
 
 ii=c(1:length(object$id))[is.element(object$id,sid)]
 nii=length(ii)
@@ -306,22 +435,9 @@ time=object$time[ii]
 if(is.null(ntrees))
 	ntrees=object$ntrees
 
-fit=object  #$fit
+fit=object  
 
-uv=unique(object$x[,xindx])
-nuv=length(uv)
-if(nuv<ngrid)
-{
-	tt=sort(uv)
-}else{
-	if(is.null(xlim)){
-		tt=seq(min(x[,xindx]),max(x[,xindx]),length=ngrid)
-	}else{
-		tt=seq(xlim[1],xlim[2],length=ngrid)
-	}
-}
- ### working here .... 
-tt=sort(rep(tt,nii)) #expand.grid(tt,rep(1,nii))[,1]
+tt=sort(rep(tt,nii)) 
 
 x[,xindx]=tt
 
@@ -330,6 +446,11 @@ xx=as.matrix(x)
 yindx=fit$yindx
 
 hh=predict_htree(object=fit,x=x,yindx=yindx,time=time,id=id,ntrees=ntrees,time_split=fit$time_split)
+
+if(object$ncat>0)
+{
+	hh=hh[,which.class]
+}
 
 dd=data.frame(y=hh,tt=tt)
 ds=aggregate(dd$y,list(tt),mean)
@@ -388,7 +509,7 @@ if(is.null(xlim)){
 }
 }
 tt_orig=tt
- ### working here .... 
+
 tt=sort(rep(tt,nii)) #expand.grid(tt,rep(1,nii))[,1]
 
 x[,xindx]=tt

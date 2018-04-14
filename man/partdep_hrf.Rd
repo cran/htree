@@ -9,7 +9,7 @@
 partdep_htb(object,xindx,xlim=NULL,ngrid=25,subsample=.1,
 	ntrees=NULL,plot.it=TRUE,cat.plot=FALSE)
 partdep_hrf(object,xindx,xlim=NULL,ngrid=25,subsample=.1,
-	plot.it=TRUE,cat.plot=FALSE)
+	plot.it=TRUE,cat.plot=FALSE,which.class=1)
 
 }
 \arguments{
@@ -21,6 +21,7 @@ partdep_hrf(object,xindx,xlim=NULL,ngrid=25,subsample=.1,
    \item{plot.it}{If \code{TRUE} then a plot is produced.}
    \item{ntrees}{Number of trees to in predictions (only for \code{htb}).}
    \item{cat.plot}{If \code{TRUE} then a plot useful for categorical values is shown, defaults to \code{FALSE}.}
+  \item{which.class}{If \code{TRUE} then a plot useful for categorical values is shown, defaults to \code{FALSE}.}
 
 }
 

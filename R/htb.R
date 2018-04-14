@@ -2,9 +2,31 @@
 # htb: historical tree boosting
 # -------------------------------- #
 
-htb=function(x,time,id,yindx,ntrees=100,nsplit=2,lambda=.1,family="gaussian",cv.fold=0,cv.rep=NULL,nsamp=5,rsplit=FALSE,
-		historical=TRUE,keep_data=TRUE,vh=NULL,vc=NULL,order.cat=FALSE)
+htb=function(x,time=NULL,id=NULL,yindx,ntrees=100,method="freqw",nsplit=1,lambda=.1,family="gaussian",cv.fold=0,cv.rep=NULL,nsamp=5,
+		historical=TRUE,keep_data=TRUE,vh=NULL,vc=NULL,delta=NULL)
 {
+
+	rsplit=FALSE
+
+	if((is.null(id)|is.null(time)))
+	{
+		## if time/id then data assumed iid at same time point (ie standard random forest)
+		id=c(1:nrow(x))
+		time=rep(1,nrow(x))
+	}
+	
+
+	if(!is.element(class(yindx),c("numeric","character")))
+	{
+		stop(" 'yindx' must give column number, or name, of response in 'x'.") 
+	}else{
+		if(class(yindx)=="character")
+			yindx=which(names(x)==yindx)
+
+		if(length(yindx)==0)
+			stop(" 'yindx' not found ")
+
+	}
 
 
   if (any(is.na(x))) {
@@ -18,8 +40,46 @@ htb=function(x,time,id,yindx,ntrees=100,nsplit=2,lambda=.1,family="gaussian",cv.
   }
   
 
+	# method code
+	method=mcode(m=method)
+
 	if(!is.data.frame(x))
 		x=as.data.frame(x)
+
+ 	if(yindx>ncol(x)|yindx<1)
+		stop(" 'yindx' out of range")
+
+ 	if(!is.numeric(time)){
+		stop("'time' variable must be numeric. ")
+	}  
+
+
+	vtype=unlist(lapply(x,class))
+
+	if(is.character(id))
+		id=as.factor(id)
+
+	if(is.factor(id))
+		id=as.numeric(id)
+
+
+
+
+	if(length(unique(c(nrow(x),length(id),length(time))))!=1) 
+		stop(" length of 'id', 'time' and number of rows of 'x' must be the same.")
+
+	classInfo=NULL
+
+	rd=reformat_data(x=x)
+	x=rd$x
+
+	ii=order(id,time)
+	x=x[ii,]
+	id=id[ii]
+	time=time[ii]
+
+	flist=rd$flist
+
 
 	tiny_number=.00001
 	
@@ -48,7 +108,7 @@ htb=function(x,time,id,yindx,ntrees=100,nsplit=2,lambda=.1,family="gaussian",cv.
 
 	tf=1
 	cv_train=NULL
-	method=family_code
+	method_family=family_code
 
 	vi=as.numeric(varimp)
 	rsplit=as.numeric(rsplit)
@@ -60,15 +120,11 @@ htb=function(x,time,id,yindx,ntrees=100,nsplit=2,lambda=.1,family="gaussian",cv.
 	vc=hc$vc
 	vh=hc$vh
 
-	mm="unordered"
-	if(order.cat)
-		mm="ordered"
-	cc=cat_predictors(x=x,yindx=yindx,method=mm)
 
-	x=cc$x
 	# -- train model 
 	fit_gb=htree(x=x,time=time,id=id,yindx=(yindx-1),ntrees=ntrees,lambda=lambda,rf=rf,nsplit=nsplit,nsamp=nsamp,tf=tf,id_sampling=id_sampling,rsplit=rsplit,
-		mtry=mtry,vi=vi,time_split=time_split,oob=oob,oobmatrix=oobmatrix,keep_data=keep_data,vh=vh,vc=vc,cv_train=cv_train,method=method)
+		mtry=mtry,vi=vi,time_split=time_split,oob=oob,oobmatrix=oobmatrix,keep_data=keep_data,vh=vh,vc=vc,cv_train=cv_train,method=method,
+		delta=delta,control=list(method_family=method_family))
 
 	fit_cv=list()
 	if(cv.fold>1)
@@ -81,11 +137,11 @@ htb=function(x,time,id,yindx,ntrees=100,nsplit=2,lambda=.1,family="gaussian",cv.
 		cv_error=rep(0,ntrees)
 		for(k in 1:cv.rep)
 		{
-			cat(paste(" cv-fold ",k," out-of ",cv.rep,".\n",sep=""))
+			#cat(paste(" cv-fold ",k," out-of ",cv.rep,".\n",sep=""))
 			fit_cv[[k]]=htree(x=x,time=time,id=id,yindx=(yindx-1),ntrees=ntrees,lambda=lambda,rf=rf,
 					nsplit=nsplit,nsamp=nsamp,tf=tf_cv,id_sampling=id_sampling,rsplit=rsplit,
 					mtry=mtry,vi=vi,time_split=time_split,oob=oob,oobmatrix=oobmatrix,keep_data=FALSE,
-					vh=vh,vc=vc,cv_train=cv_train,method=method)
+					vh=vh,vc=vc,cv_train=cv_train,method=method,control=list(method_family=method_family))
 
 			cv_error=cv_error+fit_cv[[k]]$error
 		}
@@ -96,6 +152,12 @@ htb=function(x,time,id,yindx,ntrees=100,nsplit=2,lambda=.1,family="gaussian",cv.
 			fit_gb$cv_error=-fit_gb$cv_error
 	}
 
+	fit_gb$vtype=vtype
+	fit_gb$indx_original=ii
+	fit_gb$flist=flist
+	fit_gb$family=family
+	fit_gb$method_family=method_family
+
 	fit_gb$cv.rep=cv.rep
 	fit_gb$cv.fold=cv.fold
 	fit_gb$cv=fit_cv
@@ -103,7 +165,7 @@ htb=function(x,time,id,yindx,ntrees=100,nsplit=2,lambda=.1,family="gaussian",cv.
 }
 
 
-varimp_htb=function(object,nperm=10,ntrees=NULL)
+varimp_htb=function(object,nperm=20,ntrees=NULL)
 {
 # object=ff;ntrees=100;nperm=10
 	group="id";stat=1
@@ -145,22 +207,38 @@ varimp_htb=function(object,nperm=10,ntrees=NULL)
 	pred_permuted=pred_permuted/nout
 
 	# -- prediction error change ---- 
-	method=object$method
+	method=object$method_family
 	id=object$id[ii_keep]
 	y=object$x[ii_keep,object$yindx+1]
 	zscore=NULL
+	pchange=NULL
+	sdchange=NULL
+
 	for(k in 1:ncol(object$x))
 	{
 			delta=pred_error_change(y=y,pred=pred_orig,pred_perm=pred_permuted[,k],method=method,sumstat=sumstat)
 			delta_id=aggregate(delta,by=list(id=id),mean)[,2]
 			se_delta=sqrt(var(delta_id)/length(delta_id))
 			zscore=c(zscore,mean(delta_id)/se_delta)
+			pchange=c(pchange,mean(delta_id))
+			sdchange=c(sdchange,se_delta)
+			
 
 	}
 	
-
 	names(zscore)=colnames(object$x)
-	zscore
+	err=min(object$cv_error)
+	dz=data.frame(delta_rel=round(pchange/err,3),delta_error=round(pchange,3),stderr=round(sdchange,3),zscore=round(zscore,3),pvalue=pnorm(zscore,lower.tail=FALSE))
+	names(dz)=c("Relative change","Mean change","SE","Z-value","P-value") 
+	#rownames(dz)=NULL
+
+	if(object$time_split==0)
+		dz=dz[-which(rownames(dz)==names(object$x)[object$yindx+1]),,drop=FALSE]
+
+	#names(zscore)=colnames(object$x)
+	#zscore
+	dz[order(dz[,4],decreasing=TRUE),]
+
 }
 
 
@@ -224,7 +302,8 @@ varimp_aux=function(object,x,time,id,nperm=10,ntrees)
 	p=ncol(x)
 
 	h=.C("read_predict",as.double(as.matrix(x)),as.integer(n),as.integer(p),as.double(time),as.integer(id),
-		as.integer(yindx),as.double(t(object$trees)),as.integer(nrow(object$trees)),as.integer(ntrees_in_matrix),as.integer(time_split))
+		as.integer(yindx),as.double(t(object$trees)),as.integer(nrow(object$trees)),as.integer(ncol(object$trees)),as.integer(ntrees_in_matrix),
+		as.integer(time_split),as.integer(object$method))
 	
 	# 
 	
@@ -238,13 +317,14 @@ varimp_aux=function(object,x,time,id,nperm=10,ntrees)
 	
 	h=.C("free_predict")
 
-	if(object$method==2)
+	if(length(object$control$method_family)>0){
+	if(object$control$method_family==2)
 	{
 		# logistic regression 
 		pred=1/(1+exp(-pred))
 		perm_pred=1/(1+exp(-perm_pred))
 	}
-
+	}
 	#list(zscore=zscore,pred_oob=pred_oob,pred_perm=perm_pred)
 	list(pred=pred,perm_pred=perm_pred)
 }
@@ -263,6 +343,22 @@ partdep_htb=function(object,xindx,xlim=NULL,ngrid=25,subsample=.1,ntrees=NULL,pl
 		pd=partdep_seb(object=object,xindx=xindx,xlim=xlim,ngrid=ngrid,ntrees=ntrees,subsample=subsample)
 	}
 	
+	if((subsample>1)|(subsample<=0))
+		stop(" Invalid 'subsample' value.")
+
+
+	if(class(xindx)=="character")
+	{
+		xindx=which(names(object$x)==xindx)
+	
+		if(length(xindx)==0)
+			stop(" 'xindx' not found.")
+	}
+
+	if(xindx>object$dimx[2])
+		stop(" Invalid 'xindx' ")
+
+
 	if(plot.it)
 	{
 		nx=names(object$x)[xindx]
@@ -354,7 +450,7 @@ partdep_seb=function(object,xindx,xlim=NULL,ngrid=100,ntrees=NULL,subsample=.1)
 	sum_est=rep(0,ngrid_use)
 	ss=rep(0,ngrid_use)
 	hh=predict_htree(object=object,x=x,yindx=yindx,time=time,id=id,ntrees=object$ntrees,time_split=object$time_split,all.trees=FALSE)
-	if(object$method==2)
+	if(object$method_family==2)
 	{
 		# logistic regression 
 		hh=1/(1+exp(-hh))
@@ -364,7 +460,7 @@ partdep_seb=function(object,xindx,xlim=NULL,ngrid=100,ntrees=NULL,subsample=.1)
 
 	for(b in 1:B){
 		hh=predict_htree(object=fit$cv[[b]],x=x,yindx=yindx,time=time,id=id,ntrees=ntrees,time_split=fit$time_split,all.trees=FALSE)
-		if(object$method==2)
+		if(object$method_family==2)
 		{
 			# logistic regression 
 			hh=1/(1+exp(-hh))
@@ -423,25 +519,82 @@ points(c(x[k],x[k]),c(l[k],u[k]),type="l",lwd=lwd)
 
 
 
-predict_htb=function(object,x=NULL,yindx=NULL,time=NULL,id=NULL,ntrees=NULL,type="response",se=FALSE)
+predict_htb=function(object,x=NULL,time=NULL,id=NULL,ntrees=NULL,type="response",se=FALSE)
 {
 
 	# object=ff;x=NULL;yindx=NULL;time=NULL;id=NULL;ntrees=NULL;type="response";se=FALSE
 
-	if(!is.null(yindx))
-		yindx=yindx-1  # 0-offset 
-
-	if(!is.null(x))
+	yindx=NULL;
+	if((!is.null(x))&(is.null(id)|is.null(time)))
 	{
-		if(length(object$mapping)>0)
-		{
-			# Map categorical variables to integers 
-			x=map_categorical(object=object,x=x)
-		}
-
+		## if x supplied but not time/id then data assumed iid at same time point (ie standard random forest)
+		id=c(1:nrow(x))
+		time=rep(1,nrow(x))
 	}
 
+
+	if(class(object)!="htree")
+		stop("'object' not of class 'htree' ")
+
+	if(object$rf==1)
+		stop("'object' fit by 'hrf', use 'predict_hrf' ")
+
+
 	
+	ii=NULL 
+	if(!is.null(x))
+	{
+	
+		  if (any(is.na(x))) {
+		    	stop("Missing data in 'x'.", call. = FALSE)
+  			}
+		  if (any(is.na(id))) {
+ 			   stop("Missing data in 'id'.", call. = FALSE)
+			  }
+		  if (any(is.na(time))) {
+ 			   stop("Missing data in 'time'.", call. = FALSE)
+ 			 }
+
+
+		if(sum(unlist(lapply(x,class))!=object$vtype)>0)
+			stop("Variable class mismatch with training data.")
+
+		if(ncol(x)!=object$dimx[2])
+			stop("Number of columns in 'x' differs from training data.")
+
+		if(nrow(x)==0)
+			stop("Zero of rows in 'x'.") 
+		
+	
+		if(length(object$flist)>0)
+		{
+
+			# map strings/factors into integers 
+			x=format_data(x=x,flist=object$flist)
+		}
+		if(is.null(id)|is.null(time))
+			stop(" Arguments 'id' and 'time' cannot be empty.")
+		if(is.character(id))
+			id=as.factor(id)
+
+		if(is.factor(id))
+			id=as.numeric(id)
+
+		if(!is.numeric(time))
+			stop(" 'time' must be numeric.")
+
+		ii=order(id,time)
+		x=x[ii,,drop=FALSE]
+		id=id[ii]
+		time=time[ii]
+
+		
+	
+	}else{
+		id=time=NULL
+	}
+
+
 	if(is.null(x))
 	{
 		x=object$x
@@ -450,16 +603,42 @@ predict_htb=function(object,x=NULL,yindx=NULL,time=NULL,id=NULL,ntrees=NULL,type
 		id=object$id
 	}
 
-	pred=predict_htree(object=object,x=x,yindx=yindx,time=time,id=id,ntrees=ntrees,time_split=1)
+
+	if(0){
+	if(!is.element(class(yindx),c("numeric","character")))
+	{
+		stop(" 'yindx' must give column number, or name, of response in 'x'.") 
+	}else{
+		if(class(yindx)=="character")
+			yindx=which(names(x)==yindx)
+
+		if(length(yindx)==0)
+			stop(" 'yindx' not found ")
+
+	}
+
+	if(!is.null(yindx))
+		yindx=yindx-1  # 0-offset 
+
+	if(is.null(yindx))
+		yindx=object$yindx	
+
+
+	 if(yindx>ncol(x)|yindx<0)
+		stop(" 'yindx' out of range")
+
+	}
 	
-	if(object$method==2) # logistic regression
+	pred=predict_htree(object=object,x=x,yindx=object$yindx,time=time,id=id,ntrees=ntrees,time_split=1)
+	
+	if(object$method_family==2) # logistic regression
 	{
 		if(type=="response") 
 			pred=1/(1+exp(-pred))
 	}
 
 
-	if(!se|length(object$cv)==0)
+	if((!se)|(length(object$cv)==0))
 	{
 	}else{
 
@@ -477,7 +656,7 @@ predict_htb=function(object,x=NULL,yindx=NULL,time=NULL,id=NULL,ntrees=NULL,type
 		#pred=list(pred=pred,se=se_pred)
 		pred=cbind(pred,se_pred)
 		colnames(pred)=c("pred","se")
-		if(object$method==2&type=="response")
+		if(object$method_family==2&type=="response")
 			cat("Prediction standard errors apply to link, not probabilitites.\n")
 	}
 	pred
@@ -507,7 +686,7 @@ histcon_aux=function(vh,vc,x,id)
 	    vh=c(1:ncol(x))[sd_x_id>tiny_number]
 	    if(length(vh)==0)
 		{
-			print(" No across time variation within levels of 'id'. ")
+			#cat("No across time variation within levels of 'id'. \n")
 			time_split=0
 			vh=NULL
 			vc=NULL
