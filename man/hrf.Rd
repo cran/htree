@@ -11,39 +11,38 @@ hrf(x,
     id=NULL,
     yindx,
     ntrees = 100,
-    method="freqw",
+    method="freq",
     mtry=NULL,
     se=FALSE,
     B=100,
     R=10,
-    nsplit=NULL,
     nsamp=5,
     historical=TRUE,
-    keep_data=TRUE,
     vh=NULL,
     vc=NULL,
     delta=NULL,
-    control=list(nmax=10,nodesize=1))
+    classify=FALSE,
+    control=list())
 }
 \arguments{
-\item{x}{a data frame containing response and predictors}
-\item{time}{vector of observation times}
-\item{id}{subject identifier, if \code{NULL} observations are assumed independent}
+\item{x}{A data frame containing response and predictors}
+\item{time}{A vector of observation times associated with rows of \code{x}.}
+\item{id}{Subject identifier, if \code{NULL} observations are assumed independent}
 \item{yindx}{Name of response variable, alt. its column number in \code{x}}
 \item{ntrees}{Number of trees in ensemble}
-\item{method}{Historical summary method, can be \code{freq}, \code{frac}, \code{mean0}, \code{freqw}, \code{fracw} and \code{mean0w}}
+\item{method}{Historical summary method, can be \code{freq}, \code{frac}, \code{mean0}, \code{freqw}, \code{fracw} and \code{mean0w} (see below).}
 \item{mtry}{Number of predictors sampled at each split}
-\item{se}{If \code{TRUE} then bootstrap standard errors are computed. Total number of trees for fit for bootstrapping is \code{B*R}. }
-\item{B}{Only used if \code{se==TRUE}, number of bootstrap samples, defaults to \code{100}.}
-\item{R}{Only used if \code{se==TRUE}, forest size for each bootstrap sample, defaults to \code{R=10}.}
-\item{nsplit}{Number of splits in regression trees. Defaults to \code{NULL}, in which case tree size determined by requiring terminal nodes to contain atleast 5 observations.}
+\item{se}{If \code{TRUE} then bootstrap standard errors are computed. Total number of trees fit for bootstrapping is \code{B*R}. }
+\item{B}{Only used if \code{se=TRUE}, number of bootstrap samples, defaults to \code{100}.}
+\item{R}{Only used if \code{se=TRUE}, forest size for each bootstrap sample, defaults to \code{R=10}.}
 \item{nsamp}{Number of sampled \code{delta} values, see below}
 \item{historical}{If \code{TRUE} then historical splitting is done, else only standard (ie concurrent predictor) splitting.}
-\item{keep_data}{If \code{TRUE} training data is returned in fit object.}
-\item{vh}{Optional vector of indexes giving the historical predictors. Indexes correspond column numbers of \code{x}.}
-\item{vc}{Optional vector of indexes giving concurrent predictors.}
-\item{delta}{A vector of history lags to be used (see below), defaults to \code{NULL} in which case all possible observed lags are available for splitting.}
-\item{control}{A list of control parameters.}
+\item{vh}{Optional vector of variable names to be used as historical predictors, can be a numeric vector giving column numbers of \code{x}.}
+\item{vc}{Optional vector of variable names to be used as concurrent predictors, can be a numeric vector giving column numbers of \code{x}.}
+\item{delta}{An optional vector of time-lags to be used (see below).}
+\item{classify}{If \code{TRUE} then a classification tree is built (using gini-impurity node splitting).}
+\item{control}{A list of control parameters (see below). All arguments, except those describing the data, can be set in \code{control}. Arguments in \code{control} 
+are used if both are given.}
 
 }
 
@@ -57,29 +56,32 @@ subjects, and the sampling in time can be irregular.
 
 \code{hrf} estimates a model for the response \eqn{y_{ij}} using both \eqn{(t_{ij},x_{ij})} (the observations concurrent with \eqn{y_{ij}}) and all preceeding observations of the \eqn{i}-th subject up to (but not including) time \eqn{t_{ij}}. The model is fit using \code{historical} regression (alt. classification) trees. Here a predictor is one 
 of two types, either \code{concurrent} or \code{historical}. The concurrent predictors for \eqn{y_{ij}} are the elements of the vector (\eqn{(t_{ij},x_{ij})}), while a 
-historic predictor is the set of all preceeding values (preceeding time \eqn{t_{ij}}) of a given element of \eqn{(y_{ij},t_{ij},x_{ij})}, for subject \eqn{i}. In 
+historic predictor is the set of all preceeding values (i.e. prior to time \eqn{t_{ij}}) of a given element of \eqn{(y_{ij},t_{ij},x_{ij})}, for subject \eqn{i}. In 
 a historic regression tree, node splitting on a \code{concurrent} predictor follows the approach in standard regression (classification) trees. For \code{historical} predictors 
 the splitting is modified since, associated with each observed response \eqn{y_{ij}}, the number (and observation times) of observations of a \code{historical} predictor will vary according to 
 \eqn{i} and \eqn{j}. For these, the splitting is done by first transforming the preceeding values of a predictor using a \code{summary function}. This summary is 
 invertible, in the sense that knowledge of it is equivalent to knowledge of the covariate history. Letting \eqn{\bar{z}_{ijk}} denote the set of historical values of the 
 \eqn{k}-th element of \eqn{z_{ij}}, the summary function is denoted \eqn{s(\eta;\bar{z}_{ijk})} where \eqn{\eta} is the argument vector of the summary 
-function. Node splitting based on a historical predictor is done by solving \deqn{\mbox{argmin}\sum_{(ij)\in Node} (y_{ij}-\mu_L I(s(\eta;\bar{z}_{ijk})<c)-\mu_R I(s(\eta;\bar{z}_{ijk})\geq c))^2,} where the minimization is over the vector \eqn{(k,\mu,c,\eta)}. Each node of \code{historical} regression tree is split according to the best split among all possible splits based on both concurrent and historical predictors. 
+function. Node splitting based on a historical predictor is done by solving \deqn{\mbox{argmin}\sum_{(ij)\in Node} (y_{ij}-\mu_L I(s(\eta;\bar{z}_{ijk})<c)-\mu_R I(s(\eta;\bar{z}_{ijk})\geq c))^2,} where the minimization is over the vector \eqn{(k,\mu,c,\eta)}. Each node of \code{historical} regression tree is split using the best split 
+among all splits of concurrent and historical predictors. 
 
 
 
 
-Different \code{summary functions} are available in \code{hrf}, specified by the argument \code{method}, where \code{method="freq"} and corresponds the summary 
-\deqn{s(\eta;\bar{z}_{ijk})=\sum_{h: t_{ij}-\eta_1\leq t_{ih}<t_{ij}} I(z_{ihk}<\eta_2)};  \code{method="frac"}:  
-\deqn{s(\eta;\bar{z}_{ijk})=\sum_{h: t_{ij}-\eta_1\leq t_{ih}<t_{ij}} I(z_{ihk}<\eta_2)/n_{ij}(\eta)};  \code{method="mean0"}: 
-\deqn{s(\eta;\bar{z}_{ijk})=\sum_{h: t_{ij}-\eta_1\leq t_{ih}<t_{ij}} z_{ihk}/n_{ij}(\eta)};  \code{method="freqw"}: 
-\deqn{s(\eta;\bar{z}_{ijk})=\sum_{h: t_{ij}-\eta_1\leq t_{ih}<t_{ij}-\eta_2} I(z_{ihk}<\eta_3)};  \code{method="fracw"}: 
-\deqn{s(\eta;\bar{z}_{ijk})=\sum_{h: t_{ij}-\eta_1\leq t_{ih}<t_{ij}-\eta_2} I(z_{ihk}<\eta_3)/n_{ij}(\eta)};  \code{method="meanw0"}:  
-\deqn{s(\eta;\bar{z}_{ijk})=\sum_{h: t_{ij}-\eta_1\leq t_{ih}<t_{ij}-\eta_2} z_{ihk}/n_{ij}(\eta)}. Here \eqn{n_{ij}(\eta)} denotes the number of observations of subject 
+Different \code{summary functions} are available in \code{hrf}, specified by the argument \code{method}. If \code{method="freq"} the summary function summarizing a covariate history is: 
+\deqn{s(\eta;\bar{z}_{ijk})=\sum_{h: t_{ij}-\eta_1\leq t_{ih}<t_{ij}} I(z_{ihk}<\eta_2);}  \code{method="frac"}:  
+\deqn{s(\eta;\bar{z}_{ijk})=\sum_{h: t_{ij}-\eta_1\leq t_{ih}<t_{ij}} I(z_{ihk}<\eta_2)/n_{ij}(\eta);}  \code{method="mean0"}: 
+\deqn{s(\eta;\bar{z}_{ijk})=\sum_{h: t_{ij}-\eta_1\leq t_{ih}<t_{ij}} z_{ihk}/n_{ij}(\eta);}  \code{method="freqw"}: 
+\deqn{s(\eta;\bar{z}_{ijk})=\sum_{h: t_{ij}-\eta_1\leq t_{ih}<t_{ij}-\eta_2} I(z_{ihk}<\eta_3);}  \code{method="fracw"}: 
+\deqn{s(\eta;\bar{z}_{ijk})=\sum_{h: t_{ij}-\eta_1\leq t_{ih}<t_{ij}-\eta_2} I(z_{ihk}<\eta_3)/n_{ij}(\eta);}  \code{method="meanw0"}:  
+\deqn{s(\eta;\bar{z}_{ijk})=\sum_{h: t_{ij}-\eta_1\leq t_{ih}<t_{ij}-\eta_2} z_{ihk}/n_{ij}(\eta).} Here \eqn{n_{ij}(\eta)} denotes the number of observations of subject 
 \eqn{i} in the 
-time window \eqn{[t_{ij}-\eta_1,t_{ij}-\eta_2)}. In the case  \eqn{n_{ij}(\eta)=0}, the summary function is set to zero, i.e \eqn{s(\eta;\bar{z}_{ijk})=0}.   The default is \code{method="freqw"}. The possible values of \eqn{\eta_1} in the summary function can be set by the argument \code{delta}. If not supplied, the set of possible values of 
+time window \eqn{[t_{ij}-\eta_1,t_{ij}-\eta_2)}. In the case  \eqn{n_{ij}(\eta)=0}, the summary function is set to zero, i.e \eqn{s(\eta;\bar{z}_{ijk})=0}.   The default is \code{method="freq"}. The possible values of \eqn{\eta_1} in the summary function can be set by the argument \code{delta}. If not supplied, the set of possible values of 
 \eqn{\eta_1} is 
-determined by the difference in time between successive observations in the data. When a split is attempted on a historical predictor, a sample of this set is 
-taken from which the best split is selected. The size of this set equals that of the \code{nsamp} argument. 
+determined by the difference in time between within-subject successive observations in the data. When a split is attempted on a historical predictor, a sample of this set is 
+taken from which the best split is selected. The size of this set equals that of the \code{nsamp} argument. See below on \code{control} for futher arguments governing the 
+historical splitting. See below on \code{control} for futher arguments governing the 
+historical splitting.
 
 
 
@@ -91,14 +93,20 @@ standard errors for predictions when \code{predict_hrf} is used.
 
 
 
-
+All arguments (except those decribing the data \code{x}, \code{yindx},\code{time} and \code{id}) can be set in the \code{control} list. The arguments supplied 
+in \code{control} are used if both are supplied. So if \code{ntrees=300} and \code{control=list(ntrees=500)} then \code{500} trees are fit. Besides the arguments 
+described above, a number of other parameters can be set in control. These are: \code{nodesize} giving the minimum number of training observations in a terminal node; 
+\code{sample_fraction} giving the fraction of data sample to train each tree; \code{dtry} the number of sampled \code{delta} values used when splitting based on 
+a historical variable (note this is alternatively controlled by the argument \code{nsamp} above ; \code{ndelta} the number of \code{delta} values to use if \code{delta} is not supplied, these are taken as the quantiles from the 
+distribution of observed \code{delta} values in the data; \code{qtry} the number of sampled values of \eqn{\eta_2} for \code{method=freq/frac}, \eqn{\eta_3} for 
+\code{method=freqw/fracw}; \code{quantiles} is a vector of probabilities, and  is used when \code{method=frac} or \code{method=fracw}, ie when covariate histories are split on their windowed empirical distributions. Splitting is restricted to these quantiles. 
 
 
  
 }
 
-\value{ Returns a \code{list} with elements: \code{trees} giving the forest, \code{error} the OOB mse, \code{pred} the OOB predictions, \code{boot} 
-giving bootstrapped models, as well as arguments of the function call.}  
+\value{ Returns a \code{list} with elements, the most important being: \code{h} is a list returned by \code{parLapply} for fitting trees in parallel, \code{error} gives the OOB error (mse for regression, misclassification rate for classification), \code{control} a list containing control arguments, \code{boot} 
+gives bootstrapped model estimates (if \code{se=TRUE}), \code{x,id,time} give the training data. }  
 
 \references{
 L. Breiman (2001). \dQuote{Random Forests,} \emph{Machine Learning} 45(1):5-32.
@@ -110,7 +118,7 @@ Sexton and Laake (2009) \dQuote{Standard errors for bagged and random forest est
 
 \author{Joe Sexton \email{joesexton0@gmail.com}}
 
-\seealso{ \code{\link{quantile_hrf}}, \code{\link{predict_hrf}}, \code{\link{partdep_hrf}},
+\seealso{ \code{\link{predict_hrf}}, \code{\link{partdep_hrf}},
           \code{\link{varimp_hrf}}. }
 
 \examples{
@@ -119,7 +127,7 @@ Sexton and Laake (2009) \dQuote{Standard errors for bagged and random forest est
 
 # ----------------------------------------------------------------------------------------- ##
 # Mother's stress on child illness:
-# 	Investigate whether mother's stress is (Granger) causal on child illness 
+# 	Investigate whether mother's stress is (Granger) causal for child illness 
 #	'hrf' model is fit using previous observations of mother's stress to predict 
 #	child's illness at given time point, but not mother's stress at that time point
 #
@@ -140,82 +148,102 @@ Sexton and Laake (2009) \dQuote{Standard errors for bagged and random forest est
 data(mscm) 
 mscm=as.data.frame(na.omit(mscm))
 
-# -- first two weeks
-mscm=mscm[mscm$day<=14,]
 
 # -- set concurrent and historical predictors 
 historical_predictors=match(c("stress","illness"),names(mscm))
 concurrent_predictors=which(names(mscm)!="stress")
 
-# -- fit historical random forest
-#	(NOTE: response is 0/1 so a regression tree is equivalent 
-##	 to a classification tree with Gini-index splitting) 
-ff=hrf(x=mscm,id=mscm$id,time=mscm$day,yindx="illness",
-	vh=historical_predictors,vc=concurrent_predictors)
+control=list(vh=historical_predictors,vc=concurrent_predictors)
 
-# -- variable importance table
+
+# -- fit historical random forest
+#	(NOTE: response is 0/1 so a regression tree is
+# 	 the same as  a classification tree with Gini-index splitting) 
+ff=hrf(x=mscm,id=mscm$id,time=mscm$day,yindx="illness",control=control)
+
+# out-of-bag error 
+plot(1:length(ff$error),ff$error,type="l",main="OOB error",xlab="forest size",ylab="mse")
+
+# .. larger nodesize works slightly better
+control$nodesize=20
+ff=hrf(x=mscm,id=mscm$id,time=mscm$day,yindx="illness",control=control)
+points(1:length(ff$error),ff$error,type="l",col="blue")
+
+
+# -- variable importance table 
 vi=varimp_hrf(ff)
 vi
 
 
-# -- fit historical random forest with 'se=TRUE'
-ff=hrf(x=mscm,id=mscm$id,time=mscm$day,yindx="illness",
-	vh=historical_predictors,vc=concurrent_predictors,se=T,B=50)
 
-# -- partial dependence with top 4 predictors
+# -- fit historical random forest with 'se=TRUE'
+control$se=TRUE
+ff=hrf(x=mscm,id=mscm$id,time=mscm$day,yindx="illness",control=control)
+
+# -- partial dependence for top 4 predictors (with +/-2 SE estimates) 
 par(mfrow=c(2,2))
 for(k in 1:4)
-	pd=partdep_hrf(ff,xindx=rownames(vi)[k])
+	pd=partdep_hrf(ff,xindx=as.character(vi$Predictor[k]))
 
 par(mfrow=c(1,1))
 
 
 
 
-# -------------------------------------------- ##
-# Simulated data from random intercept model
-# -------------------------------------------- ##
+## -- Classification trees 
 
-## -- simulated data -------------------------------------------------- #
-p=5;sigma_e=.5;sigma_a=.5;v=rep(1,p);n=500;pnoise=2
-random_intercept=rnorm(n,sd=sigma_a^.5)
-random_intercept=as.numeric(matrix(random_intercept,nrow=p,ncol=n,byrow=TRUE))
-x=random_intercept+rnorm(n*p,sd=sigma_e^.5)
-id=sort(rep(1:n,p))
-time<-rep(1:p,n)
-znoise=matrix(rnorm(n*p*pnoise),ncol=pnoise)
-xx=as.data.frame(cbind(time,x,znoise))
-xx$rfact=as.factor(sample(letters,nrow(xx),replace=TRUE))
-## --------------------------------------------------------------------- #
+## setting classify=TRUE builds classification tree (gini-impurity node splitting)
+control$classify=TRUE
+## ... standard error estimation not implemented .. turn off bootstrapping 
+control$se=FALSE
 
-# fit historical random forest
-ff=hrf(x=xx,time=time,id=id,yindx=2,ntrees=100)
+ff=hrf(x=mscm,id=mscm$id,time=mscm$day,yindx="illness",control=control)
 
-# plot oob-error 
-plot(1:ff$ntrees,ff$error,type="l",col="blue")
+# -- plot oob classification error 
+plot(1:length(ff$error),ff$error,type="l",xlab="forest size",ylab="oob classification error")
+abline(mean(mscm$illness),0,lty=2)  ## error of constant model
+
+p=predict_hrf(ff)
+
+## variable importance table (model error measured by gini-impurity)
+vi=varimp_hrf(ff)
+vi
 
 
-# fit forest with standard error selection
-ff=hrf(x=xx,time=time,id=id,yindx=2,ntrees=100,se=TRUE)
+# -------------------------------- #
+# Data w/irregular observation times 
+# ------------------------------- #
+data(cd4)
 
-# plot partial dependence of response on its past 
-pd=partdep_hrf(ff,xindx=2)
+control=list(se=TRUE)
+ff=hrf(x=cd4,id=cd4$id,time=cd4$time,yindx="count",control=control)
 
-# variable importance table
-varimp_hrf(ff)
+vi=varimp_hrf(ff)
+
+# -- partial dependence for top 4 predictors (with +/-2 SE estimates) 
+par(mfrow=c(2,2))
+for(k in 1:4)
+	pd=partdep_hrf(ff,xindx=as.character(vi$Predictor[k]))
+par(mfrow=c(1,1))
+
+plot(1:length(ff$error),ff$error,xlab="forest size",ylab="oob mse",type="l")
+
+## by default, the number of delta values (parameter 'eta_1' above) is 20
+## can set this using 'ndelta'  
+control$ndelta=50
+
+control$se=FALSE # -- turning off bootstrapping .. 
+ff=hrf(x=cd4,id=cd4$id,time=cd4$time,yindx="count",control=control)
+points(1:length(ff$error),ff$error,type="l",lty=2)
+
+# the grid of delta values 
+ff$control$delta
 
 
-
-
-# -------------------------------------------- ##
-# Examples with non-longitudinal data
-# -------------------------------------------- ##
-
-
-
-# -------------------- ##
-# Boston Housing data 
-# -------------------- ##
+# --------------------------------------- ##
+# Boston Housing data (not longitudinal)
+# --------------------------------------- ##
+# library(htree)
 library(mlbench)
 library(randomForest)
 
@@ -224,10 +252,12 @@ dat=as.data.frame(na.omit(BostonHousing))
 
 
 ## omitting arguments time/id assumes rows are iid 
-h=hrf(x=dat,yindx="medv",ntrees=500)
+control=list(ntrees=500,sample_fraction=.5,nodesize=1)
+h=hrf(x=dat,yindx="medv",control=control)
 
-## randomForest comparison
-r=randomForest(medv~.,data=dat)
+## randomForest comparison 
+##	(by default, randomForest samples with replacement, while hrf samples without) 
+r=randomForest(medv~.,data=dat,replace=F,sampsize=ceiling(.5*nrow(dat)),nodesize=1)
 
 ## plot oob-error for both
 plot(1:length(r$mse),r$mse,type="l",ylim=c(min(r$mse,h$error),max(r$mse,h$error)),
@@ -239,39 +269,14 @@ vi=varimp_hrf(h)
 vi
 
 ## -- partial dependence plots with approximate 95% C.I 
-h=hrf(x=dat,yindx="medv",ntrees=500,se=TRUE)
+control$se=TRUE
+h=hrf(x=dat,yindx="medv",control=control)
 
 par(mfrow=c(2,2))
 for(k in 1:4)
-	pd=partdep_hrf(h,xindx=rownames(vi)[k])
+	pd=partdep_hrf(h,xindx=as.character(vi$Predictor[k]))
 
 par(mfrow=c(1,1))
-
-# ------------------------------------- ##
-# Ionosphere data (classification)  
-# ---------------------------------- ##
-data(Ionosphere)
-dat=as.data.frame(na.omit(Ionosphere))
-
-
-h=hrf(x=dat,yindx="Class",ntrees=500)
-r=randomForest(Class~.,data=dat)
-
-plot(1:length(r$err[,1]),r$err[,1],type="l",ylim=c(min(r$err[,1],h$error),max(r$err[,1],h$error)),
-	ylab="mis-classification rate",xlab="forest size",main="Out-of-bag mis-classification")
-points(1:length(h$error),h$error,type="l",col="blue")
-
-# -- variable importance table
-vi=varimp_hrf(h)
-
-
-par(mfrow=c(2,2))
-for(k in 1:4)
-	pd=partdep_hrf(h,xindx=rownames(vi)[k])
-
-
-par(mfrow=c(1,1))
-
 
 
 

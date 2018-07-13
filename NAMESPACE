@@ -2,25 +2,25 @@ useDynLib(htree)
 
 
 
-# hrf functions 
+import(parallel)
+
+
 export(hrf)
+export(hrf_boot)
 export(predict_hrf)
+export(partdep)
 export(partdep_hrf)
 export(varimp_hrf)
-export(quantile_hrf)
 
 
-
-# htb functions 
 export(htb)
-export(partdep_htb)
 export(predict_htb)
+export(partdep_htb)
 export(varimp_htb)
+export(predict_viaux)
 
-
-
-importFrom("graphics", "axis", "plot", "points")
-importFrom("stats", "aggregate", "median", "sd", "var","pnorm")
+importFrom("graphics", "axis", "plot", "points","arrows","barplot")
+importFrom("stats", "aggregate", "median", "sd", "var","pnorm","na.omit","quantile")
 
 
 

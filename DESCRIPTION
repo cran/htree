@@ -1,7 +1,7 @@
 Package: htree
-Version: 1.0.0
-Date: 2018-04-14
-Depends: R (>= 2.9.0)
+Version: 2.0.0
+Date: 2018-06-23
+Depends: R (>= 2.9.0), parallel
 Title: Historical Tree Ensembles for Longitudinal Data
 Author: Joe Sexton <joesexton0@gmail.com>
 Description: Historical regression trees are an extension of standard trees, 
@@ -15,5 +15,5 @@ Maintainer: Joe Sexton <joesexton0@gmail.com>
 License: GPL (>= 2)
 Repository: CRAN
 NeedsCompilation: yes
-Packaged: 2018-04-14 19:53:53 UTC; js
-Date/Publication: 2018-04-14 20:34:50 UTC
+Packaged: 2018-07-13 14:16:12 UTC; joe
+Date/Publication: 2018-07-13 15:00:03 UTC

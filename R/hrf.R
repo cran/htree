@@ -1,43 +1,40 @@
-mcode=function(m)
+
+
+hrf=function(x,time=NULL,id=NULL,yindx,ntrees=100,method="freq",mtry=NULL,se=FALSE,B=100,R=10,nsamp=5,historical=TRUE,vh=NULL,vc=NULL,delta=NULL,classify=FALSE,control=list())
 {
-	# translate m string to method integer code 
-	clist=list()
-	clist[["freq"]]=1
-	clist[["frac"]]=4
-	clist[["mean"]]=3
-	clist[["sum"]]=5
-	clist[["mean0"]]=6
-	clist[["sum0"]]=7
-	clist[["meanw0"]]=8
-	clist[["sumw0"]]=9
-	clist[["freqw"]]=10
-	clist[["fracw"]]=11
-	clist[["class"]]=12
 
-
-	mc=clist[[as.character(m)]]
-	if(is.null(mc))
+	## arguments can be passed 'directly' or via control-list, control arguments are used if both supplied
+	dtry=nsamp
+	argnames=c("ntrees","mtry","se","B","R","method","vh","vc","delta","classify","dtry","historical")
+	for(a in argnames)
 	{
-		cat(paste(" method: '",m,"' not matched, setting to 'freq'. \n",sep=""))
-		mc=1
+
+		if(is.null(control[[a]]))
+			eval(parse(text=paste("control[[a]]=",a,sep="")))
+		eval(parse(text=paste(a,"=control[[a]]",sep="")))
 	}
 
-	return(mc)
-}
 
-# -------------------------------- #
-# hrf: historical random forest
-# -------------------------------- #
+	if(is.null(control$type))
+		control$type=method_convert(method)
 
-hrf=function(x,time=NULL,id=NULL,yindx,ntrees=100,method="freqw",mtry=NULL,se=FALSE,B=100,R=10,nsplit=NULL,nsamp=5,
-		historical=TRUE,keep_data=TRUE,vh=NULL,vc=NULL,delta=NULL,control=list(nmax=10,nodesize=1))
-{
 
-	rsplit=FALSE;
+	if(is.null(mtry)&is.null(control$vc))
+		mtry=floor(sqrt(ncol(x)-1))
+
+	if(is.null(mtry)&(!is.null(control$vc)))
+		mtry=floor(sqrt(length(control$vc)))
+
+	if(!is.null(mtry)){
+		mtry=min(c(mtry,ncol(x)))
+		if(!is.null(control$vc))
+			mtry=min(c(mtry,length(control$vc)))
+	}
+	control$mtry=mtry
+
 
 	if((is.null(id)|is.null(time)))
 	{
-		## if time/id then data assumed iid at same time point (ie standard random forest)
 		id=c(1:nrow(x))
 		time=rep(1,nrow(x))
 	}
@@ -57,20 +54,19 @@ hrf=function(x,time=NULL,id=NULL,yindx,ntrees=100,method="freqw",mtry=NULL,se=FA
 
 
 
- ## Check missing values
-  if (any(is.na(x))) {
-    stop("Missing data in 'x'.", call. = FALSE)
-  }
-  if (any(is.na(id))) {
-    stop("Missing data in 'id'.", call. = FALSE)
-  }
-  if (any(is.na(time))) {
-    stop("Missing data in 'time'.", call. = FALSE)
-  }
+	  if (any(is.na(x))) {
+	    stop("Missing data in 'x'.", call. = FALSE)
+	  }
+	  if (any(is.na(id))) {
+	    stop("Missing data in 'id'.", call. = FALSE)
+	  }
+	  if (any(is.na(time))) {
+	    stop("Missing data in 'time'.", call. = FALSE)
+	  }
 
 
-  if(yindx>ncol(x)|yindx<1)
-	stop(" 'yindx' out of range")
+ 	 if(yindx>ncol(x)|yindx<1)
+		stop(" 'yindx' out of range")
 
  	if(!is.numeric(time)){
 		stop("'time' variable must be numeric. ")
@@ -84,39 +80,7 @@ hrf=function(x,time=NULL,id=NULL,yindx,ntrees=100,method="freqw",mtry=NULL,se=FA
 
 	if(is.factor(id))
 		id=as.numeric(id)
-
-
-
-	
-	if(length(unique(c(nrow(x),length(id),length(time))))!=1) 
-		stop(" length of 'id', 'time' and number of rows of 'x' must be the same.")
-
-
-	
-	
-
-	classInfo=NULL
-
-	if(!is.data.frame(x))
-		x=as.data.frame(x)
-
-	if(is.factor(x[,yindx]))
-	{
-		if(length(levels(x[,yindx]))>50)
-			stop(" Number of classes too large (limit is 50) ")
-	
-		if(method!="freqw")
-			cat("Setting 'method=freqw', only method implemented for classification.\n")
-		method="class"
-
-		if(se==TRUE)
-		{
-			se=FALSE
-			cat("Standard error estimation not implemented for classification.\n")
-		}
-	}
-
-	## -- convert factors/strings to numeric 
+	## -- convert factors/strings if any
 	rd=reformat_data(x=x)
 	x=rd$x
 
@@ -124,93 +88,205 @@ hrf=function(x,time=NULL,id=NULL,yindx,ntrees=100,method="freqw",mtry=NULL,se=FA
 	x=x[ii,]
 	id=id[ii]
 	time=time[ii]
-
 	flist=rd$flist
 
 
-	# method code
-	method=mcode(m=method)
-
-
-	tiny_number=.00001
-	lambda=1
-	id_sampling=TRUE
-	rf=1
-
-	if(is.null(nsplit))
-		nsplit=nrow(x)
-
-	tf=1
-	cv_train=NULL
-	##method=1
-	oobmatrix=NULL
-	varimp=FALSE	
-	vi=as.numeric(varimp)
-	rsplit=as.numeric(rsplit)
-	time_split=as.numeric(historical)
-	oob=TRUE
-
-	## --- set up historical and concurrent predictor vectors: vh and vc ----------  ##
-	if(!is.null(vh))
-	{
-
-		if(is.null(vc))
-	    		vc=c(1:ncol(x))[-yindx] #[-vh]
-		vc=vc-1
-		vh=vh-1
-
-	}else{
-	    # identify time-varying predictors 
-	    xaux=aggregate(x,by=list(id=id),sd)[,-1]
-	    xaux[is.na(xaux)]=0
-	    sd_x_id=apply(xaux,2,sd)
-	   # print(sd_x_id)
-	    vh=c(1:ncol(x))[sd_x_id>tiny_number]
-	    if(length(vh)==0)
-		{
-			#cat(" No across time variation within levels of 'id'. \n")
-			time_split=0
-			vh=NULL
-			vc=NULL
-		}else{
-			if(is.null(vc))
-				vc=c(1:ncol(x))[-yindx] # [-vh]
-	    		vc=vc-1
-	   		vh=vh-1
-		}
 	
+	if(length(unique(c(nrow(x),length(id),length(time))))!=1) 
+		stop(" length of 'id', 'time' and number of rows of 'x' must be the same.")
+
+
+
+	ntrees_orig=control$ntrees
+
+	if(is.null(control$ncores))
+	{
+		control$ncores=detectCores()
+	}
+	cluster=makeCluster(control$ncores)
+	on.exit(stopCluster(cluster))
+	nti=ceiling(control$ntrees/control$ncores)
+
+	
+	pc=proc_control(x=x,yindx=yindx,id=id,time=time,control=control)
+
+	NCOL_TREE=16
+	nsplit=nrow(x)
+
+
+	ntrees=nti
+	nodesize=pc$nodesize
+	concurrent=pc$concurrent
+	nconcurrent=pc$nconcurrent
+	historic=pc$historic
+	nhistoric=pc$nhistoric
+	delta=pc$delta
+	delta0=pc$delta0
+	quantiles=pc$quantiles
+	dtry=pc$dtry
+	nsplit=pc$nsplit
+	qtry=pc$qtry
+	quantiles=pc$quantiles
+	type=pc$type
+	sample_fraction=pc$sample_fraction
+
+	
+
+
+	ncat=-10
+	if(classify)
+	{
+		ncat=length(unique(x[,yindx]))
+		if(ncat>50)
+			stop("Max number of classes is 50.")
 	}
 
+	h=parLapply(cl=cluster, X=1:control$ncores,cfaux,x,yindx,id,time,ntrees,mtry,nsplit,
+		nodesize=nodesize,concurrent=concurrent,nconcurrent=nconcurrent,historic,nhistoric,
+		delta,delta0,type,quantiles,dtry,qtry,ncat=ncat,sample_fraction=sample_fraction)
 
 
-	fit_rf=htree(x=x,time=time,id=id,yindx=(yindx-1),ntrees=ntrees,lambda=lambda,rf=rf,nsplit=nsplit,nsamp=nsamp,tf=tf,id_sampling=id_sampling,rsplit=rsplit,
-		mtry=mtry,vi=vi,time_split=time_split,oob=oob,oobmatrix=oobmatrix,keep_data=keep_data,vh=vh,vc=vc,cv_train=cv_train,method=method,delta=delta,control=control)
+	pred_oob=NULL
+	ss=NULL
+	if(ncat<0){
+		## -- oob error 
+		oob<-NULL
+		hh=paste("oob=cbind(",paste("h[[",1:length(h),"]]$oob",collapse=","),")",sep="")
+		eval(parse(text=hh))
+		pred<-NULL
+		hh=paste("pred=cbind(",paste("h[[",1:length(h),"]]$pred",collapse=","),")",sep="")
+		eval(parse(text=hh))
+
+		cr=apply(oob,1,cumsum)
+		pr=apply(oob*pred,1,cumsum)
+		mr=pr/cr
+		yy=kronecker(t(rep(1,ncol(oob))),x[,yindx])
+		ss=apply((yy-t(mr))^2,2,mean,na.rm=T)
+		pred_oob=t(mr)[,ntrees]
+	}
+
+	#pc$vh=pc$historic
+	#pc$vc=pc$concurrent
+	retlist=list(h=h,error=ss,control=pc,yindx=yindx,x=x,id=id,time=time,pred_oob=pred_oob)
 
 	
-	fit_rf$classInfo=flist[[names(x)[yindx]]]
-	fit_rf$vtype=vtype
-	fit_rf$indx_original=ii
+	class(retlist)="htree"
+	retlist$dimx=dim(x)
+	retlist$rf=1	
+	retlist$ncat=ncat
+	retlist$vtype=vtype
+	retlist$flist=flist
+	x=deformat_data(x=x,flist=flist,vtype=vtype)
+	retlist$x=x	
+	# -- put in original order 
+	retlist$id[ii]=id
+	retlist$time[ii]=time
+	retlist$x[ii,]=x
+	retlist$mtry=mtry	
 
+	if(ncat>0)
+		retlist$error=class_error_hrf(object=retlist)
+	
 
-
-
-	fit_boot=NULL
 	if(se)
-	{
-		# Estimate standard errors (noisy bootstrap) 
-		fit_boot=seboot(B=B,M=R,object=fit_rf)
+		retlist$boot=hrf_boot(object=retlist,B=control$B,R=control$R)
+
 	
+	retlist
+}
+
+
+
+class_error_hrf=function(object)
+{
+
+	# Helper function: compute classification oob error for all trees 
+	pp=predict_hrf(object=object,x=object$x,id=object$id,time=object$time,all.trees=T)
+
+	oobm<-NULL
+	## -- combine oob matrices
+	hh=paste("oobm=cbind(",paste("object$h[[",1:length(object$h),"]]$oob",collapse=","),")",sep="")
+	eval(parse(text=hh))
+
+	## dup rows
+	oobm_rep=oobm[sort(rep(1:nrow(object$x),object$ncat)),]
+	pm=pp*oobm_rep
+	cp=t(apply(pm,1,cumsum))
+	coob=t(apply(oobm_rep,1,cumsum))
+	coob[which(coob>0)]=1
+	coob[coob==0]=NA
+	cp=cp*coob
+
+	y=object$x[[object$yindx]]
+	ncat=object$ncat
+	gg=function(x){
+		xm=matrix(x,ncol=ncat,byrow=TRUE)
+		majority_vote=apply(xm,1,which.max)
+		majority_vote=as.numeric(majority_vote)-1
+		mean(majority_vote!=y,na.rm=T)
 	}
 
-	#if(keep_data)
-	#	fit_rf$x=deformat_data(fit_rf$x,flist)
-
-	fit_rf$flist=flist
+	error=as.numeric(unlist(lapply(as.data.frame(cp),gg)))
 
 
-	fit_rf$boot=fit_boot
-	fit_rf
+	error
+
 }
+
+
+
+hrf_boot=function(object,B=50,R=10)
+{
+	x=object$x
+	yindx=object$yindx
+	time=object$time
+	id=object$id
+	mtry=object$control$mtry
+	control=object$control
+	x=format_data(x=x,flist=object$flist)
+
+	if(is.null(control$ncores))
+	{
+		control$ncores=detectCores()
+	}
+	cluster=makeCluster(control$ncores)
+	on.exit(stopCluster(cluster))
+
+	pc=proc_control(x=x,yindx=yindx,id=id,time=time,control=control)
+
+	NCOL_TREE=16
+	nsplit=nrow(x)
+
+
+	ntrees=R
+	nodesize=pc$nodesize
+	concurrent=pc$concurrent
+	nconcurrent=pc$nconcurrent
+	historic=pc$historic
+	nhistoric=pc$nhistoric
+	delta=pc$delta
+	delta0=pc$delta0
+	quantiles=pc$quantiles
+	dtry=pc$dtry
+	nsplit=pc$nsplit
+	qtry=pc$qtry
+	quantiles=pc$quantiles
+	type=pc$type
+	boot=TRUE
+	sample_fraction=pc$sample_fraction
+
+	h=parLapply(cl=cluster, X=1:B,cfaux,x,yindx,id,time,ntrees,mtry,nsplit,
+		nodesize=nodesize,concurrent=concurrent,nconcurrent=nconcurrent,historic,nhistoric,
+		delta,delta0,type,quantiles,dtry,qtry,boot=boot,sample_fraction=sample_fraction)
+
+
+	h
+}
+
+
+
+
+
 
 
 
@@ -262,14 +338,20 @@ reformat_data=function(x)
 }
 
 
-deformat_data=function(x,flist)
+deformat_data=function(x,flist,vtype)
 {
 
 	if(!is.null(flist))
 	{
 
-		for(k in names(flist))
-			x[[k]]=as.factor(as.character(unlist(flist[[k]]$ilist[as.character(x[[k]])])))
+		for(k in names(flist)){
+			z=as.character(unlist(flist[[k]]$ilist[as.character(x[[k]])]))
+			vtypek=vtype[which(names(vtype)==k)]
+			txt=paste("x[[k]]=as.",vtypek,"(z)",sep="")
+			eval(parse(text=txt))
+			#x[[k]]=as.factor()
+
+		}
 		
 	}
 	
@@ -313,12 +395,20 @@ predict_hrf=function(object,x=NULL,time=NULL,id=NULL,all.trees=FALSE,se=FALSE)
 
 	yindx=NULL
 
-	if((!is.null(x))&(is.null(id)|is.null(time)))
+	if((is.null(x)))
 	{
-		## if x supplied but not time/id then data assumed iid at same time point (ie standard random forest)
+		id=object$id
+		time=object$time
+		x=object$x
+	}
+
+
+	if((is.null(id)|is.null(time)))
+	{
 		id=c(1:nrow(x))
 		time=rep(1,nrow(x))
 	}
+	
 
 
 	if(class(object)!="htree")
@@ -328,8 +418,6 @@ predict_hrf=function(object,x=NULL,time=NULL,id=NULL,all.trees=FALSE,se=FALSE)
 		stop(" 'object' not fit by 'hrf' ")
 
 
-	if(!is.null(yindx))
-		yindx=yindx-1
 
 	if(is.null(yindx))
 		yindx=object$yindx
@@ -349,15 +437,17 @@ predict_hrf=function(object,x=NULL,time=NULL,id=NULL,all.trees=FALSE,se=FALSE)
  			   stop("Missing data in 'time'.", call. = FALSE)
  			 }
 
-
-		if(sum(unlist(lapply(x,class))!=object$vtype)>0)
+		
+		xclass=unlist(lapply(x,class))
+		## print(xclass)
+		if(sum(xclass!=object$vtype&(is.element(xclass,c("factor","character"))|is.element(object$vtype,c("factor","character"))))>0)
 			stop("Variable class mismatch with training data.")
 
 		if(ncol(x)!=object$dimx[2])
 			stop("Number of columns in 'x' differs from training data.")
 
 		if(nrow(x)==0)
-			stop("Zero of rows in 'x'.") 
+			stop("No rows in 'x'.") 
 		
 	
 		if(length(object$flist)>0)
@@ -392,39 +482,28 @@ predict_hrf=function(object,x=NULL,time=NULL,id=NULL,all.trees=FALSE,se=FALSE)
 
 		
 
-	# predict_se=function(m,object,x=NULL,id=NULL,time=NULL)
-	pred=predict_htree(object=object,x=x,yindx=yindx,time=time,id=id,ntrees=NULL,time_split=1,all.trees=all.trees)
+	pred=predict_cfn(object=object,x=x,id=id,time=time,all.trees=all.trees,se=se)
+
+	if(is.null(ncol(pred)))
+		pred=matrix(pred,ncol=1)
+
 	retlist=pred
-	if(!is.null(ii))
-		retlist[ii]=pred
-
-	if(is.null(x))  # -- put predictions on training data in original order 
-	{
-
-		if(object$ncat<0)
-			retlist[object$indx_original]=pred
-		if(object$ncat>0){
-			
-			retlist[object$indx_original,]=pred
-			colnames(retlist)=object$classInfo$levels
-		}
+	if((!is.null(ii))&object$ncat<0){
+		retlist[ii,]=pred
 	}
-	if(se)
-	{
-		if(!is.null(object$boot))
-		{
-			serr=predict_se(m=object$boot,object=object,x=x,id=id,time=time)
-			retlist=cbind(pred,serr)
-			if(!is.null(ii))
-				retlist[ii,]=retlist
-			if(is.null(x))  # -- put predictions on training data in original order 
-				retlist[object$indx_original,]=retlist
 
-			colnames(retlist)=c("pred","se")
+	if((object$ncat>0)){
 
+		if(all.trees){
+		fa=function(x,ncat) return(((x-1)*ncat+1):(x*ncat))
+		jj=as.numeric(mapply(fa,ii,ncat=rep(object$ncat,length(ii))))
+		retlist=pred
+		retlist[jj,]=pred
 		}else{
-			cat(" Set argument 'se=TRUE' in 'hrf' to get standard errors.\n")
+			retlist[ii,]=pred
+			colnames(retlist)=paste("Prob_",0:(object$ncat-1),sep="")
 		}
+
 	}
 	
 	retlist
@@ -432,9 +511,9 @@ predict_hrf=function(object,x=NULL,time=NULL,id=NULL,all.trees=FALSE,se=FALSE)
 
 
 
-partdep_hrf=function(object,xindx,xlim=NULL,ngrid=25,subsample=.1,plot.it=TRUE,cat.plot=FALSE,which.class=1)
+partdep_hrf=function(object,xindx,xlim=NULL,ngrid=10,subsample=.5,plot.it=TRUE,which.class=1,cond=NULL)
 {
-	main="Partial dependence"
+	main="Marginal effect"
 
 	if(object$ncat>0)
 	{
@@ -460,37 +539,31 @@ partdep_hrf=function(object,xindx,xlim=NULL,ngrid=25,subsample=.1,plot.it=TRUE,c
 	if(xindx>object$dimx[2])
 		stop(" Invalid 'xindx' ")
 
-	if(is.null(object$boot))
-	{
-		# No bootstrap samples, no standard error bars produced
-		pd=partdep(object=object,xindx=xindx,xlim=xlim,ngrid=ngrid,ntrees=NULL,subsample=subsample,which.class=which.class)
 
-	}else{
-		# partial dependence with standard errors 
-		pd=partdep_se(object=object,m=object$boot,xindx=xindx,xlim=xlim,ngrid=ngrid,ntrees=NULL,subsample=subsample)
-	}
+	pd=partdep(object=object,xindx=xindx,xlim=xlim,ngrid=ngrid,ntrees=NULL,subsample=subsample,which.class=which.class,se=(!is.null(object$boot)),cond=cond)
+
 
 	if(plot.it)
 	{
 		nx=names(object$x)[xindx]
+		if((!is.element(object$vtype[xindx],c("factor","character")))&(length(unique(object$x[,xindx]))>5)){
 		if(!is.null(pd$se))
 		{
-			if(!cat.plot){
-	
 				upper=pd$y+2*pd$se;lower=pd$y-2*pd$se
 				ylim=c(min(lower),max(upper))
 				plot(pd$x,pd$y,type="l",lwd=3,xlab=nx,ylab="",main=main,ylim=ylim,cex.axis=1.5,cex.lab=2,cex.main=2)
 				points(pd$x,upper,type="l",lwd=3,lty=2)
 				points(pd$x,lower,type="l",lwd=3,lty=2)
-			}else{
 
-				plot_cat2(m=pd$y,l=(pd$y-2*pd$se),u=(pd$y+2*pd$se),cc=pd$x,ylim=NULL,mult=1,bf=4,lwd=3,main=main)
-
-
-			}
-	
 		}else{
-			plot(pd$x,pd$y,type="l",lwd=3,xlab=nx,ylab="",main="Partial dependence",cex.axis=1.5,cex.lab=2,cex.main=2)
+			plot(pd$x,pd$y,type="l",lwd=3,xlab=nx,ylab="",main=main,cex.axis=1.5,cex.lab=2,cex.main=2)
+		}
+		}else{
+
+
+				plot.means(pd$y,categories=pd$x,SEs=pd$se,x.axis.label=nx)
+
+
 		}
 	}
 pd
@@ -500,279 +573,507 @@ pd
 
 
 
-varimp_hrf=function(object,nperm=20)
+
+
+
+
+
+
+
+
+
+
+
+partdep=function(object,xindx,xlim=NULL,ngrid=100,ntrees=NULL,subsample=1,which.class=1,se=FALSE,cond=NULL)
 {
+	# -- subsample subjects
+	# subsample=.5;ngrid=20;object=ff;xindx=20
+	uid=unique(object$id)
+	ns=round(subsample*length(uid))
+	sid=sample(uid,size=ns,replace=F)
 
 
-	if(class(object)!="htree")
-		stop(" 'object' not of class 'htree'.")
-
-	if(object$rf!=1)
-		stop(" 'object' not fit by 'hrf'.")
-
-	if(nperm<1)
-		stop(" 'nperm<1'.")  
-
-	ntrees=length(unique(object$trees[,1]))
-	ntrees_in_matrix=length(unique(object$trees[,1]))
-
-	group="id"
-	x=object$x
-	yindx=object$yindx
-	time=object$time
-	id=object$id
-	time_split=1
-	y=x[,yindx+1]
-
-
-	n=nrow(x)
-	p=ncol(x)
-
-	h=.C("read_predict",as.double(as.matrix(x)),as.integer(n),as.integer(p),as.double(time),as.integer(id),
-		as.integer(yindx),as.double(t(object$trees)),as.integer(nrow(object$trees)),
-		as.integer(ncol(object$trees)),as.integer(ntrees_in_matrix),as.integer(time_split),as.integer(object$method))
-	
-	# 
-	set_oob(object$oobmatrix)
-
-
-	## -- dont need to do this .... 
-	h=.C("predict_trees_all",as.integer(ntrees),pred=double(nrow(x)*ntrees))	
-	predictions=matrix(h$pred,ncol=ntrees,nrow=nrow(x),byrow=FALSE)
-	noob=apply(object$oobmatrix==1,1,sum)
-	pred_oob=apply(predictions*object$oobmatrix,1,sum)
-	pred_oob=pred_oob/noob
-
- 	#void varimp(int *nperm,double *res)
-	h=.C("varimp",as.integer(nperm),res=double(n*p))
-	perm_pred=matrix(h$res,ncol=p,nrow=n,byrow=FALSE)
-
-	# p=5;id=hb$id;pred_oob=hz$pred_oob;perm_pred=hz$pred_perm
-	zscore=NULL
-	pchange=NULL
-	sdchange=NULL
-	for(k in 1:p)
+	uv=unique(object$x[,xindx])
+	nuv=length(uv)
+	if((nuv<ngrid)|is.element(object$vtype[xindx],c("character","factor")))
 	{
-		z=abs(y-perm_pred[,k])-abs(y-pred_oob)
-		if(group=="id")
-		{	# compute error change by subject/id 
-			zid=aggregate(z,by=list(id=id),mean) 
-			se_zid=sqrt(var(zid[,2])/length(unique(id)))
-			pchange=c(pchange,mean(zid[,2]))
-			sdchange=c(sdchange,se_zid)
-			zscore=c(zscore,mean(zid[,2])/se_zid)
+		tt=sort(uv)
+		ngrid=nuv
+	}else{
+		if(is.null(xlim)){
+			tt=seq(min(object$x[,xindx]),max(object$x[,xindx]),length=ngrid)
 		}else{
-			# error change by row, assuming independence between 
-			se_z=sqrt(var(z)/n)
-			zscore=c(zscore,mean(z)/se_z)
-			pchange=c(pchange,mean(z))
-			sdchange=c(sdchange,se_z)
-
+			tt=seq(xlim[1],xlim[2],length=ngrid)
 		}
 	}
-
-	names(zscore)=colnames(x)
-	err=min(object$error)
-	dz=data.frame(delta_rel=round(pchange/err,3),delta_error=round(pchange,3),stderr=round(sdchange,3),zscore=round(zscore,3),pvalue=pnorm(zscore,lower.tail=FALSE))
-	names(dz)=c("Relative change","Mean change","SE","Z-value","P-value") 
-	#rownames(dz)=NULL
-	# -- free pred info  
-	h=.C("free_predict")
-
-	if(object$time_split==0)
-		dz=dz[-which(rownames(dz)==names(object$x)[object$yindx+1]),,drop=FALSE]
-
-	#list(zscore=zscore,pred_oob=pred_oob,pred_perm=perm_pred)
-	dz[order(dz[,4],decreasing=TRUE),]
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-quantile_hrf<-function(object,x=NULL,time=NULL,id=NULL,ntrees=NULL,prob=seq(.1,.9,length=10))
-{
-
-
-if(class(object)!="htree")
-	stop(" 'object' must be of class 'htree'.")
-
-if(object$rf!=1)
-	stop(" 'object' is not a random forest.")
-
-if(object$ncat>0)
-	stop(" 'quantile_hrf' only for regression, not classification.")
-
-
-if((!is.null(x))&(is.null(time)|is.null(id)))
-{
-	## rows assumed independent
-	id=c(1:nrow(x))
-	time=rep(1,nrow(x))
-
-}
-
-
-
-
-time_split=1
-
-if(is.null(ntrees))
-	ntrees=length(unique(object$trees[,1]))
-
-ntrees_in_matrix=length(unique(object$trees[,1]))
-
-
-n=nrow(object$x)
-p=ncol(object$x)
-
-h=.C("read_predict",as.double(as.matrix(object$x)),as.integer(n),as.integer(p),as.double(object$time),as.integer(object$id),
-		as.integer(object$yindx),as.double(t(object$trees)),as.integer(nrow(object$trees)),
-		as.integer(ncol(object$trees)),as.integer(ntrees_in_matrix),as.integer(time_split),as.integer(object$method))
-
-h=.C("set_tnode_row")
-
-
-
-# -- free pred info  
-h=.C("free_predict")
-
-
-
-if(!is.null(x))
-{
-
-	hc=check_data(object=object,x=x,id=id,time=time)
-
-	x=hc$x
-	yindx=hc$yindx
-	time=hc$time
-	id=hc$id
-	indx_original=hc$ii
-
-}else{
 	
-	x=object$x
+
+	ii=which(is.element(object$id,sid))
+	nii=length(ii)
+	mid=max(object$id)+1
+	idaux=object$id[ii]
+	id=NULL
+	for(k in 1:ngrid)
+		id=c(id,idaux+mid*k)
+
+	ii=rep(ii,ngrid)
+	x=object$x[ii,]
+	time=object$time[ii]
+
+
+
+	if(is.null(ntrees))
+		ntrees=object$ntrees
+
+
+	tt=sort(rep(tt,nii)) 
+
+	x[,xindx]=tt
+
+	vv=NULL
+	xx=as.matrix(x)
 	yindx=object$yindx
-	time=object$time
-	id=object$id
-	indx_original=object$indx_original
 
-}
-
-n=nrow(x)
-p=ncol(x)
-
-h=.C("read_predict",as.double(as.matrix(x)),as.integer(n),as.integer(p),as.double(time),as.integer(id),
-		as.integer(yindx),as.double(t(object$trees)),as.integer(nrow(object$trees)),
-		as.integer(ncol(object$trees)),as.integer(ntrees_in_matrix),as.integer(time_split),as.integer(object$method))
-
-
-h=.C("get_weights",as.integer(nrow(object$x)),res=integer(nrow(object$x)*nrow(x)))
-
-ii=order(object$x[,yindx+1])
-ysorted=object$x[ii,yindx+1]
-
-weights=matrix(h$res,nrow=nrow(x),ncol=nrow(object$x),byrow=TRUE)
-weights=weights[,ii]
-weights=weights/apply(weights,1,sum)
-
-# -- free pred info  
-h=.C("free_predict")
-
-np=length(prob)
-n=length(ysorted)
-m=nrow(x)
-h=.C("quantile_R",as.double(prob),as.integer(np),as.double(ysorted),as.integer(n),as.double(as.numeric(t(weights))),as.integer(m),quant=double(m*np))
-quants=matrix(h$quant,nrow=m,ncol=np,byrow=TRUE)
-
-#list(weights=weights,y=ysorted,)
-
-## -- put quantiles in order of original data 
-qu=quants
-
-qu[indx_original,]=quants
-
-qu
-}
-
-
-quant_test=function(q,w,y)
-{
-
-h=.C("quantile_aux",as.double(q),as.double(y),as.integer(length(y)),as.double(w),quant=double(1))
-
-h$quant
-}
-
-
-## TESTING FUNCTION 
-
-get_tnode=function(ti,ni)
-{
-
-#void get_rows(int *treeindx,int *nodeindx,int *res,int *n)
-h=.C("get_rows",as.integer(ti),as.integer(ni),res=integer(1000),n=integer(1))
-h$res[1:h$n]
-}
+	hh=predict_hrf(object,x=x,time=time,id=id)
 
 
 
-
-check_data=function(object,x,id,time)
-{
-
-
-		if(sum(unlist(lapply(x,class))!=object$vtype)>0)
-			stop("Variable class mismatch with training data.")
-
-		if(ncol(x)!=object$dimx[2])
-			stop("Number of columns in 'x' differs from training data.")
-
-		if(nrow(x)==0)
-			stop("Zero of rows in 'x'.") 
-		
+	if(object$ncat>0)
+		hh=hh[,which.class]
 	
-		if(length(object$flist)>0)
+
+	if(!is.null(cond))
+	{
+		txt=paste("ii=with(x,which(",cond,"))",sep="")
+		eval(parse(text=txt))
+		
+		if(length(ii)>0)
 		{
-
-			# map strings/factors into integers 
-			x=format_data(x=x,flist=object$flist)
+			dd=data.frame(y=hh[ii],x[ii,xindx])
+			tt=tt[ii]
+		}else{
+			cat("Condition 'cond' not satisfied by any observations, ignoring ....")
+			dd=data.frame(y=hh,x[,xindx])
+		
 		}
-		if(is.null(id)|is.null(time))
-			stop(" Arguments 'id' and 'time' cannot be empty.")
-		if(is.character(id))
-			id=as.factor(id)
 
-		if(is.factor(id))
-			id=as.numeric(id)
+	}else{
+		dd=data.frame(y=hh,x[,xindx])
 
-		if(!is.numeric(time))
-			stop(" 'time' must be numeric.")
+	}		
+	ds=aggregate(dd$y,list(tt),mean)
 
-		ii=order(id,time)
-		x=x[ii,,drop=FALSE]
-		id=id[ii]
-		time=time[ii]
 
-	list(x=x,id=id,time=time,ii=ii)
+	if(se==TRUE&length(object$boot)==0)
+	{
+		cat("Need to run 'hrf' with 'se=TRUE' to get standard errors.\n")
+		se=FALSE
+
+	}
+
+	stderr=NULL
+	boot_tree=NULL
+	if(se){
+		## -- Get standard errors 
+		object$h=object$boot
+		hh=predict_hrf(object,x=x,time=time,id=id,all.trees=TRUE)
+		Mlist=list()
+		if(!is.null(cond)&(length(ii)>0))
+			hh=hh[ii,]
+
+		
+		Mlist$M=hh
+		Mlist$tt=tt
+	
+		M=aggregate(hh,by=list(tt),mean)
+		M=(as.matrix(M[,-1]))
+		B=length(object$boot);
+		R=length(unique(object$boot[[1]]$trees[,1]))
+
+		start=seq(1,((B-1)*R+1),by=R)
+		end=start-1+R
+		
+		mean_v=mapply(function(x,y){ rowMeans(M[,c((x):(y))]) },x=start,y=end)
+		var_v=mapply(function(x,y){ rowSums(M[,c((x):(y))]^2) },x=start,y=end)
+		var_v=rowSums((var_v-R*mean_v^2)/(R-1))
+		bias=var_v/B*(1/R) 
+		var_biased=apply(mean_v,1,var)
+
+		## -- bias-correct 
+		var_hat=var_biased-bias
+		mean_var=mean(var_hat[which(var_hat>=0)],na.rm=T)
+		var_hat[var_hat<0]=mean_var
+		stderr=sqrt(var_hat)
+		
+		## -- data frame of partial dependence 
+		boot_tree=data.frame(boot=sort(rep(1:B,R*nrow(ds))),tree=rep(sort(rep(1:R,nrow(ds))),B),x=rep(ds[,1],B),y=as.numeric(M))
+
+
+
+	}
+
+	#list(y=ds[,2],x=ds[,1],se=stderr,chisq=zzu,chisq_biased=zz,df=df,boot_raw=mean_v,tree_raw=M)
+	list(y=ds[,2],x=ds[,1],se=stderr,boot_tree=boot_tree)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+predict_viaux=function(trees,x,oob,id,time,yindx,concurrent,nconcurrent,historic,nhistoric,delta,delta0,type,quantiles,nperm,rf=1,ncat=-10)
+{
+
+#	h_vi=predict_viaux(combt,x,oob,id,time,yindx,
+#			concurrent,nconcurrent,historic,nhistoric,
+#			delta,delta0,type,quantiles,nperm,ncat=object$ncat)
+
+
+
+	NCOL_TREES=16
+	ntrees=sum(trees[,2]==(-99))
+
+
+	npred=nrow(x)*ncol(x)
+	if(ncat>0)
+		npred=npred*ncat
+
+	h=.C("ctree_varimp",as.double(as.matrix(x)),as.integer(id),as.double(time),as.integer(nrow(x)),
+		as.integer(ncol(x)),as.integer(yindx-1),as.integer(ntrees),
+		as.integer(concurrent),as.integer(nconcurrent),as.integer(historic),as.integer(nhistoric),
+		as.double(delta),as.double(delta0),as.integer(length(delta)),
+		as.integer(type),as.integer(ncat),as.double(quantiles),as.integer(length(quantiles)),
+		as.double(as.matrix(trees)),as.integer(nrow(trees)),as.integer(as.matrix(oob)),as.integer(nperm),as.integer(rf),pred=double(npred))
+
+	h=matrix(h$pred,ncol=ncol(x),byrow=FALSE)
+
+	h
+}
+
+
+
+predict_viauxP=function(X,trees,x,oob,id,time,yindx,concurrent,nconcurrent,historic,nhistoric,delta,delta0,type,quantiles,nperm,rf=1,ncat=-10)
+{
+
+#	h_vi=predict_viaux(combt,x,oob,id,time,yindx,
+#			concurrent,nconcurrent,historic,nhistoric,
+#			delta,delta0,type,quantiles,nperm,ncat=object$ncat)
+
+
+
+	NCOL_TREES=16
+	ntrees=sum(trees[,2]==(-99))
+
+
+	npred=nrow(x)*ncol(x)
+	if(ncat>0)
+		npred=npred*ncat
+
+	h=.C("ctree_varimp",as.double(as.matrix(x)),as.integer(id),as.double(time),as.integer(nrow(x)),
+		as.integer(ncol(x)),as.integer(yindx-1),as.integer(ntrees),
+		as.integer(concurrent),as.integer(nconcurrent),as.integer(historic),as.integer(nhistoric),
+		as.double(delta),as.double(delta0),as.integer(length(delta)),
+		as.integer(type),as.integer(ncat),as.double(quantiles),as.integer(length(quantiles)),
+		as.double(as.matrix(trees)),as.integer(nrow(trees)),as.integer(as.matrix(oob)),as.integer(nperm),as.integer(rf),pred=double(npred))
+
+	h=matrix(h$pred,ncol=ncol(x),byrow=FALSE)
+
+	h
+}
+
+
+
+
+
+
+
+
+varimp_hrf=function(object,nperm=20,parallel=TRUE)
+{
+
+	x=object$x
+	id=object$id
+	time=object$time
+	yindx=object$yindx
+	control=object$control
+	#nti=ceiling(ntrees/control$ncores)
+
+	x=format_data(x=x,flist=object$flist)
+
+	pc=proc_control(x=x,yindx=yindx,id=id,time=time,control=control)
+
+	nodesize=pc$nodesize
+	concurrent=pc$concurrent
+	nconcurrent=pc$nconcurrent
+	historic=pc$historic
+	nhistoric=pc$nhistoric
+	delta=pc$delta
+	delta0=pc$delta0
+	quantiles=pc$quantiles
+	dtry=pc$dtry
+	nsplit=pc$nsplit
+	qtry=pc$qtry
+	quantiles=pc$quantiles
+	type=pc$type
+
+
+	## --- ... 
+	h=rep(0,nrow(x))
+	combt<-NULL
+	hh=paste("combt=rbind(",paste("object$h[[",1:length(object$h),"]]$trees",collapse=","),")",sep="")
+	eval(parse(text=hh))
+
+
+	oob<-NULL
+	hh=paste("oob=cbind(",paste("object$h[[",1:length(object$h),"]]$oob",collapse=","),")",sep="")
+	eval(parse(text=hh))
+
+
+	if(parallel){
+		if(is.null(object$control$ncores))
+		{
+			object$control$ncores=detectCores()
+		}
+		cluster=makeCluster(object$control$ncores)
+		on.exit(stopCluster(cluster))
+		npi=ceiling(nperm/object$control$ncores)
+
+		h=parLapply(cl=cluster, X=1:object$control$ncores,predict_viauxP,combt,x,oob,id,time,yindx,
+			concurrent,nconcurrent,historic,nhistoric,
+			delta,delta0,type,quantiles,npi,ncat=object$ncat)
+
+		h_vi=array(0,dim=dim(h[[1]]))
+		for(k in 1:length(h))
+			h_vi=h_vi+h[[k]]
+	
+		h_vi=h_vi/length(h)
+	
+	}else{
+		h_vi=predict_viaux(combt,x,oob,id,time,yindx,
+			concurrent,nconcurrent,historic,nhistoric,
+			delta,delta0,type,quantiles,nperm,ncat=object$ncat)
+
+	}
+
+	## predict_viaux=function(trees,x,oob,,id,time,yindx,concurrent,nconcurrent,historic,nhistoric,delta,delta0,type,quantiles,nperm)
+	pa=predict_hrf(object,x=object$x,id=object$id,time=object$time,all.trees=T)
+
+	if(object$ncat<0){
+	## oob pred
+	oobm<-NULL
+	hh=paste("oobm=cbind(",paste("object$h[[",1:length(object$h),"]]$oob",collapse=","),")",sep="")
+	eval(parse(text=hh))
+
+	# oobm=1-oobm	
+	pao=rowSums(oobm*pa)
+	noob=rowSums(oobm)
+	pred_oob=pao/noob
+
+	zscore=function(z){
+		error_perm=mean((x[[object$yindx]]-z)^2)
+		error_oob=mean((x[[object$yindx]]-pred_oob)^2)
+		d=abs(x[[object$yindx]]-z)-abs(x[[object$yindx]]-pred_oob)
+		da=aggregate(d,by=list(id=object$id),mean)[,2]
+		zs=mean(da)/(sd(da)/sqrt(length(da)))
+		cret=c(error_oob,error_perm,(error_perm-error_oob)/error_oob,zs)
+		return(cret)
+	}
+	h=matrix(unlist(lapply(as.data.frame(h_vi),zscore)),ncol=4,byrow=TRUE)
+		dat=data.frame(vn=names(x),error_perm=round(h[,2],4),error_oob=round(h[,1],4),rchange=round(h[,3],3),zscore=round(h[,4],3))
+	
+
+	names(dat)=c("Predictor","Marginalized error","Model error","Relative change","Z-value") 
+	dat=dat[order(dat[,2],decreasing=TRUE),]
+	}else{
+
+		## --- variable importance for classification (based on gini-error) 
+		oobm<-NULL
+		hh=paste("oobm=cbind(",paste("object$h[[",1:length(object$h),"]]$oob",collapse=","),")",sep="")
+		eval(parse(text=hh))
+		oobm=oobm[sort(rep(1:nrow(oobm),object$ncat)),]
+
+		# oobm=1-oobm	
+		pao=rowSums(oobm*pa)
+		noob=rowSums(oobm)
+		pred_oob=pao/noob
+		pred_oob=matrix(pred_oob,ncol=2,byrow=T)
+		pred_oob=pred_oob/rowSums(pred_oob)
+
+		zscore=function(z){
+			## GINI error 
+			y=object$x[[object$yindx]]
+			zm=matrix(z,ncol=object$ncat,byrow=TRUE)
+			zm=zm/rowSums(zm)
+			z_perm=gini_error(y,zm,object=object)
+			error_perm=mean(z_perm) ##(mean((object$x[[object$yindx]]-z)^2)
+			z_oob=gini_error(y,pred_oob,object=object)
+			error_oob=mean(z_oob)
+			d=z_perm-z_oob
+			da=aggregate(d,by=list(id=object$id),mean)[,2]
+			zs=mean(da)/(sd(da)/sqrt(length(da)))
+			cret=c(error_oob,error_perm,(error_perm-error_oob)/error_oob,zs)
+			return(cret)
+		}
+		h=matrix(unlist(lapply(as.data.frame(h_vi),zscore)),ncol=4,byrow=TRUE)
+		dat=data.frame(vn=names(x),error_perm=round(h[,2],4),error_oob=round(h[,1],4),rchange=round(h[,3],3),zscore=round(h[,4],3))
+
+		names(dat)=c("Predictor","Marginalized error","Model error","Relative change","Z-value") 
+		dat=dat[order(dat[,2],decreasing=TRUE),]
+
+	}
+	dat
 
 }
+
+
+
+
+
+
+
+
+
+
+gini_error=function(y,p,object)
+{
+	m=0	
+	for(k in 1:object$ncat)
+	{
+		pp=p[,k]
+		yk=as.numeric(y==(k-1))
+		m=m+((yk-pp)^2)
+	}
+	m=m/object$ncat
+	m
+}
+
+
+
+
+
+method_convert=function(method)
+{
+	if(!is.element(method,c("freq","freqw","frac","fracw","mean0","meanw0")))
+	{
+		cat(paste(" method: '",method,"' not matched, setting to 'freq'. \n",sep=""))
+		type=2
+	}
+
+	if(method=="freq")
+		type=3
+	if(method=="freqw")
+		type=6
+	if(method=="frac")
+		type=2
+	if(method=="fracw")
+		type=5
+	if(method=="mean0")
+		type=1
+	if(method=="meanw0")
+		type=4
+
+	return(type)
+
+}
+
+
+
+
+
+plot.means <- function(means = NULL,
+                           SEs = NULL,
+                           categories = NULL,
+                           x.axis.label){
+  
+ ## Modified from  https://rpubs.com/brouwern/plotmeans2
+ n.means=length(means)  
+   
+  if(is.null(SEs)){
+	names(means)=categories
+	barplot(means,cex.names=1.5,main="Marginal effect",cex.main=2,xlab=x.axis.label,cex.lab=2)
+ }else{
+  # calculate values for plotting limits 
+  if(is.null(SEs)==F){
+  y.max <- max(means+2*SEs) 
+  y.min <- min(means-2*SEs) 
+  }else{
+	m.max=max(means)
+	m.min=min(means)
+	r=(m.max-m.min)/2 
+	
+  y.max <- max(means+r) 
+  y.min <- min(means-r) 
+  
+
+  }
+
+  # calculate values for plotting limits 
+
+  
+  #determine where to plot points along x-axis
+  x.values <- 1:n.means
+  
+  #set x axis min/max
+  x.axis.min <- min(x.values)-0.25
+  x.axis.max <- max(x.values)+0.25
+  
+  x.limits <- c(x.axis.min,x.axis.max)
+  
+  #Plot means
+  plot(means ~ x.values,
+       xlim = x.limits,
+       ylim = c(y.min,y.max),
+       xaxt = "n",
+       xlab = x.axis.label,
+       ylab = "",
+       cex = 1.25,
+       pch = 16,main="Marginal effect",cex.main=2,cex.lab=1.5)
+  
+  #Add x labels
+  axis(side = 1, 
+       at = x.values,
+       labels = categories,cex.axis=1.5
+      )
+  
+   
+  if(!is.null(SEs)){
+  lwd. <- 2
+  arrows(y0 = means,
+         x0 = x.values,
+         y1 = means+2*SEs,
+         x1 = x.values,
+         length = 0,
+         lwd = lwd.)
+  
+  #Plot lower error bar
+  arrows(y0 = means,
+         x0 = x.values,
+         y1 = means-2*SEs,
+         x1 = x.values,
+         length = 0,
+         lwd = lwd.) 
+  }
+  
+ }  
+
+  
+}
+
 

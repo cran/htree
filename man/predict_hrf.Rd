@@ -8,18 +8,19 @@
 \usage{
 
 predict_htb(object,x=NULL,time=NULL,id=NULL,
-	ntrees=NULL,type="response",se=FALSE)
+	all.trees=FALSE,type="response",ntrees=NULL,se=FALSE)
+
 predict_hrf(object,x=NULL,time=NULL,id=NULL,
 	all.trees=FALSE,se=FALSE)
 }
 \arguments{
-  \item{object}{an object of class \code{htree}.}
-  \item{x}{a data frame or matrix containing new data.  If \code{NULL} then training data in \code{object} is used. }
-   \item{time}{observation times.}
-   \item{id}{subject identifiers}
-   \item{ntrees}{number of trees to use in prediction.}
-   \item{type}{If \code{response} then prediction on same scale as response.}
-   \item{all.trees}{If \code{TRUE} then prediction for each tree is returned. Only for \code{hrf}.}
+  \item{object}{An object of class \code{htree}.}
+  \item{x}{A data frame or matrix containing new data.  If \code{NULL} then training data in \code{object} is used. }
+   \item{time}{A vector of observation times.}
+   \item{id}{A vector of length \code{nrow(x)} identifying the subjects.}
+    \item{type}{If \code{response} then predictions on same scale as response are given.}
+  \item{ntrees}{The number of trees to use in prediction.}
+   \item{all.trees}{If \code{TRUE} then predictions associated with each tree are returned.}
   \item{se}{If \code{TRUE} then standard errors of predictions are returned.}
 
 }
@@ -38,18 +39,16 @@ Returns predictions.
 # ------------------------------- #
 # Simulated data example          #
 # ------------------------------- #
-
-p=5;sigma_e=.5;sigma_a=.5;v=rep(1,p);n=500;pnoise=2
-random_intercept=rnorm(n,sd=sigma_a)
-random_intercept=as.numeric(matrix(random_intercept,nrow=p,ncol=n,byrow=TRUE))
-x=random_intercept+rnorm(n*p,sd=sigma_e)
+# library(htree)
+p=5;sigma_e=.5;sigma_a=.5;n=500;pnoise=2
+random_intercept=as.numeric(mapply(rep,rnorm(n,sd=sigma_a),times=p))
+dat=data.frame(time=rep(1:p,n),
+	x=(random_intercept+rnorm(n*p,sd=sigma_e)),
+	znoise=matrix(rnorm(n*p*pnoise),ncol=pnoise))
 id=sort(rep(1:n,p))
-time<-rep(1:p,n)
-znoise=matrix(rnorm(n*p*pnoise),ncol=pnoise)
-xx=cbind(time,x,znoise)
 
 # fit historical random forest
-hb=hrf(x=xx,time=time,id=id,yindx=2,se=TRUE,B=50)
+hb=hrf(x=dat,time=dat$time,id=id,yindx=2,se=TRUE)
 
 # get predictions with standard errors
 pred=predict_hrf(hb,se=TRUE)
@@ -67,7 +66,10 @@ datp=data.frame(y=rep(0,n),w=seq(-2,2,length=n),z=rep(0,n))
 ## -- estimate model on 50 simulated data sets
 pred=NULL
 pred_se=NULL
-nsim=50
+nsim=20
+
+## -- B=100 bootstrap samples, ensemble size of R=10 on each
+control=list(ntrees=500,B=100,R=10,se=TRUE,nodesize=5)
 for(k in 1:nsim){
 	
 	if(is.element(k,seq(1,nsim,by=10)))
@@ -75,7 +77,7 @@ for(k in 1:nsim){
 	# -- simulation model -- #
 	dat=data.frame(y=(4*datp$w+rnorm(n)),x=datp$w,z=rnorm(n))
 	# ---------------------- #
-	h=hrf(x=dat,yindx="y",ntrees=500,B=50,R=10,se=T)
+	h=hrf(x=dat,yindx="y",control=control)
 	mm=predict_hrf(object=h,x=datp,se=TRUE)
 	pred=cbind(pred,mm[,1])
 	pred_se=cbind(pred_se,mm[,2])
@@ -117,7 +119,7 @@ datp=data.frame(y=rep(0,n),w=seq(-2,2,length=n),z=rep(0,n))
 ## -- estimate model on 50 simulated data sets
 pred=NULL
 pred_se=NULL
-nsim=50
+nsim=20
 for(k in 1:nsim){
 	
 	if(is.element(k,seq(1,nsim,by=10)))
